@@ -906,6 +906,16 @@ config DRM_PANEL_SAMSUNG_AMS581VF01
 	  Say Y or M here if you want to enable support for the
 	  Samsung AMS581VF01 FHD Plus (2340x1080@60Hz) CMD mode panel.
 
+config DRM_PANEL_SAMSUNG_AMB673CP01_M2
+	tristate "Samsung AMB673CP01 M2 panel"
+	depends on OF
+	depends on DRM_MIPI_DSI
+	depends on BACKLIGHT_CLASS_DEVICE
+	help
+	  Say Y or M here if you want to enable support for the
+	  Samsung AMB673CP01 (3200x1440@120Hz) CMD mode panel found in the
+	  Xiaomi 13 Pro smartphones.
+
 config DRM_PANEL_SAMSUNG_AMS639RQ08
 	tristate "Samsung AMS639RQ08 panel"
 	depends on OF

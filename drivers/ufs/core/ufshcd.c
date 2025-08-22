@@ -11488,7 +11488,7 @@ static int ufshcd_wl_probe(struct scsi_device *sdev)
 
 	blk_pm_runtime_init(sdev->request_queue, dev);
 	pm_runtime_set_autosuspend_delay(dev, 0);
-	pm_runtime_allow(dev);
+	//pm_runtime_allow(dev);
 
 	return  0;
 }
