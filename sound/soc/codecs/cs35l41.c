@@ -250,8 +250,8 @@ static int cs35l41_dsp_audio_ev(struct snd_soc_dapm_widget *w,
 	}
 }
 
-static const char * const cs35l41_pcm_source_texts[] = {"ASP", "DSP"};
-static const unsigned int cs35l41_pcm_source_values[] = {0x08, 0x32};
+static const char * const cs35l41_pcm_source_texts[] = {"ASP", "ASP1", "DSP"};
+static const unsigned int cs35l41_pcm_source_values[] = {0x08, 0x09, 0x32};
 static SOC_VALUE_ENUM_SINGLE_DECL(cs35l41_pcm_source_enum,
 				  CS35L41_DAC_PCM1_SRC,
 				  0, CS35L41_ASP_SOURCE_MASK,
@@ -668,6 +668,7 @@ static const struct snd_soc_dapm_route cs35l41_audio_map[] = {
 	{"SPK", NULL, "Main AMP"},
 
 	{"PCM Source", "ASP", "ASPRX1"},
+	{"PCM Source", "ASP1", "ASPRX2"},
 	{"PCM Source", "DSP", "DSP1"},
 	{"CLASS H", NULL, "PCM Source"},
 };
