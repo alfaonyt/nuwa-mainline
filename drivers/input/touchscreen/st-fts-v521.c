@@ -299,9 +299,9 @@ static int st_fts_parse_properties(struct st_fts_v521 *ts)
 struct device_node *node = ts->dev->of_node;
 u32 value;
 
-ts->max_x = 1080;
-ts->max_y = 2400;
-ts->super_resolution = true;
+	ts->max_x = 14400;
+	ts->max_y = 32000;
+	ts->super_resolution = false;
 
 of_property_read_u32(node, "touchscreen-size-x", &ts->max_x);
 of_property_read_u32(node, "touchscreen-size-y", &ts->max_y);
@@ -311,8 +311,10 @@ ts->max_x = value;
 if (!of_property_read_u32(node, "fts,y-max", &value))
 ts->max_y = value;
 
-if (!of_property_read_u32(node, "fts,support-super-resolution", &value))
-ts->super_resolution = !!value;
+	if (!of_property_read_u32(node, "fts,support-super-resolution", &value))
+		ts->super_resolution = !!value;
+	else if (of_property_read_bool(node, "st,super-resolution"))
+		ts->super_resolution = true;
 
 ts->reset_gpio = devm_gpiod_get_optional(ts->dev, "reset",
  GPIOD_OUT_HIGH);
@@ -337,8 +339,8 @@ input_set_abs_params(ts->input, ABS_MT_POSITION_X, 0, ts->max_x - 1, 0,
      0);
 input_set_abs_params(ts->input, ABS_MT_POSITION_Y, 0, ts->max_y - 1, 0,
      0);
-input_set_abs_params(ts->input, ABS_MT_TOUCH_MAJOR, 0, 255, 0, 0);
-input_set_abs_params(ts->input, ABS_MT_TOUCH_MINOR, 0, 255, 0, 0);
+	input_set_abs_params(ts->input, ABS_MT_TOUCH_MAJOR, 0, 4080, 0, 0);
+	input_set_abs_params(ts->input, ABS_MT_TOUCH_MINOR, 0, 4080, 0, 0);
 input_set_abs_params(ts->input, ABS_MT_ORIENTATION, -127, 127, 0, 0);
 
 touchscreen_parse_properties(ts->input, true, &ts->prop);
