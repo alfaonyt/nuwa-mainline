@@ -40,6 +40,13 @@
 #define FTS_EVT_ID_LEAVE_POINT              0x33
 
 #define FTS_MAX_SLOTS                       10
+#define FTS_EVENT_SLOT_SHIFT                4
+#define FTS_EVENT_X_HIGH_MASK               0x0f
+#define FTS_EVENT_Y_LOW_MASK                0xf0
+#define FTS_EVENT_MAJOR_TOP_MASK            0x0c
+#define FTS_EVENT_MAJOR_LOW_MASK            0xf0
+#define FTS_EVENT_MINOR_TOP_MASK            0xc0
+#define FTS_EVENT_MINOR_LOW_MASK            0x0f
 
 struct fts_basic_ts {
 struct device *dev;
@@ -132,7 +139,7 @@ input_report_key(ts->input, BTN_TOOL_FINGER, 0);
 static void fts_basic_report_down_event(struct fts_basic_ts *ts,
 					const u8 *event)
 {
-	unsigned int slot = event[1] >> 4;
+	unsigned int slot = event[1] >> FTS_EVENT_SLOT_SHIFT;
 int x, y;
 int major, minor;
 int angle;
@@ -145,16 +152,19 @@ return;
 		y = (event[5] << 8) | event[4];
 		angle = 0;
 	} else {
-		x = ((event[3] & 0x0f) << 8) | event[2];
-		y = (event[4] << 4) | ((event[3] & 0xf0) >> 4);
+		x = ((event[3] & FTS_EVENT_X_HIGH_MASK) << 8) | event[2];
+		y = (event[4] << FTS_EVENT_SLOT_SHIFT) |
+		    ((event[3] & FTS_EVENT_Y_LOW_MASK) >> FTS_EVENT_SLOT_SHIFT);
 		angle = (s8)event[5];
 	}
 
 x = clamp_val(x, 0, ts->max_x - 1);
 y = clamp_val(y, 0, ts->max_y - 1);
 
-	major = ((event[0] & 0x0c) << 2) | ((event[6] & 0xf0) >> 4);
-	minor = ((event[7] & 0xc0) >> 2) | (event[6] & 0x0f);
+	major = ((event[0] & FTS_EVENT_MAJOR_TOP_MASK) << 2) |
+		((event[6] & FTS_EVENT_MAJOR_LOW_MASK) >> FTS_EVENT_SLOT_SHIFT);
+	minor = ((event[7] & FTS_EVENT_MINOR_TOP_MASK) >> 2) |
+		(event[6] & FTS_EVENT_MINOR_LOW_MASK);
 
 input_mt_slot(ts->input, slot);
 input_mt_report_slot_state(ts->input, MT_TOOL_FINGER, true);
@@ -171,7 +181,7 @@ __set_bit(slot, ts->active_slots);
 static void fts_basic_report_up_event(struct fts_basic_ts *ts,
   const u8 *event)
 {
-unsigned int slot = event[1] >> 4;
+	unsigned int slot = event[1] >> FTS_EVENT_SLOT_SHIFT;
 
 if (slot >= FTS_MAX_SLOTS)
 return;
@@ -290,15 +300,15 @@ usleep_range(30000, 35000);
 
 static int fts_basic_parse_dt(struct fts_basic_ts *ts)
 {
-	struct device_node *np = ts->dev->of_node;
+	struct device_node *node = ts->dev->of_node;
 	u32 value;
 
-if (of_property_read_u32(np, "fts,x-max", &ts->max_x))
-ts->max_x = 1080;
-if (of_property_read_u32(np, "fts,y-max", &ts->max_y))
-ts->max_y = 2400;
+	if (of_property_read_u32(node, "fts,x-max", &ts->max_x))
+		ts->max_x = 1080;
+	if (of_property_read_u32(node, "fts,y-max", &ts->max_y))
+		ts->max_y = 2400;
 
-if (!of_property_read_u32(np, "fts,support-super-resolution", &value))
+	if (!of_property_read_u32(node, "fts,support-super-resolution", &value))
 ts->super_resolution = !!value;
 else
 ts->super_resolution = true;
