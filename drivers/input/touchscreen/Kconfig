@@ -15,6 +15,7 @@ if INPUT_TOUCHSCREEN
 source "drivers/input/touchscreen/nt36532e/Kconfig"
 
 source "drivers/input/touchscreen/fts_spi/Kconfig"
+source "drivers/input/touchscreen/fts_spi_basic/Kconfig"
 
 config TOUCHSCREEN_88PM860X
 	tristate "Marvell 88PM860x touchscreen"

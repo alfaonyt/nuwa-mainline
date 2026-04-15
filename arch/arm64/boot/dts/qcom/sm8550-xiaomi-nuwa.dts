@@ -1034,7 +1034,7 @@
 
 	fts@0 {
 		status = "okay";
-		compatible = "st,spi";
+		compatible = "st,fts-v521-spi-basic";
 		reg = <0x0>;
 		interrupt-parent = <&tlmm>;
 		interrupts = <25 0x2008>;

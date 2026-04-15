@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+config TOUCHSCREEN_ST_FTS_V521_SPI_BASIC
+tristate "ST FTS V521 SPI touchscreen (basic)"
+depends on SPI_MASTER
+depends on OF
+help
+  Say Y here if you have a device with an ST FTS touchscreen
+  connected over SPI and only need basic multitouch reporting.
+
+  To compile this driver as a module, choose M here: the
+  module will be called fts_touch_spi_basic.
