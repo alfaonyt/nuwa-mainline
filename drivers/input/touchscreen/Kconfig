@@ -15,7 +15,16 @@ if INPUT_TOUCHSCREEN
 source "drivers/input/touchscreen/nt36532e/Kconfig"
 
 source "drivers/input/touchscreen/fts_spi/Kconfig"
-source "drivers/input/touchscreen/fts_spi_basic/Kconfig"
+
+config TOUCHSCREEN_ST_FTS_V521
+	tristate "ST FTS V521 SPI touchscreen"
+	depends on SPI_MASTER
+	depends on OF
+	help
+	  Say Y here if you have an ST FTS V521 touchscreen connected over SPI.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called st-fts-v521.
 
 config TOUCHSCREEN_88PM860X
 	tristate "Marvell 88PM860x touchscreen"
