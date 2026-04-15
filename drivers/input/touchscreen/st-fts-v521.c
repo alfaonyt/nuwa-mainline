@@ -313,8 +313,6 @@ ts->max_y = value;
 
 	if (!of_property_read_u32(node, "fts,support-super-resolution", &value))
 		ts->super_resolution = !!value;
-	else if (of_property_read_bool(node, "st,super-resolution"))
-		ts->super_resolution = true;
 
 ts->reset_gpio = devm_gpiod_get_optional(ts->dev, "reset",
  GPIOD_OUT_HIGH);
