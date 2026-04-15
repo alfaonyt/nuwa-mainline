@@ -5,6 +5,7 @@
 
 #include <linux/bitmap.h>
 #include <linux/bitops.h>
+#include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/gpio/consumer.h>
 #include <linux/input.h>
@@ -286,9 +287,9 @@ usleep_range(30000, 35000);
 
 static int fts_parse_dt(struct fts_ts *ts)
 {
-struct device_node *np = ts->dev->of_node;
-u32 value;
-int gpio;
+	struct device_node *np = ts->dev->of_node;
+	u32 value;
+	int gpio;
 
 if (of_property_read_u32(np, "fts,x-max", &ts->max_x))
 ts->max_x = 1080;
@@ -300,16 +301,22 @@ ts->super_resolution = !!value;
 else
 ts->super_resolution = true;
 
-gpio = of_get_named_gpio(np, "fts,reset-gpio", 0);
-if (gpio_is_valid(gpio)) {
-ts->reset_gpio = devm_gpiod_get_from_of_node(
-ts->dev, np, "fts,reset-gpio", 0, GPIOD_OUT_HIGH,
-"fts-reset");
-if (IS_ERR(ts->reset_gpio))
-return PTR_ERR(ts->reset_gpio);
-}
+	ts->reset_gpio = devm_gpiod_get_optional(ts->dev, "reset",
+						 GPIOD_OUT_HIGH);
+	if (IS_ERR(ts->reset_gpio))
+		return PTR_ERR(ts->reset_gpio);
 
-return 0;
+	if (!ts->reset_gpio) {
+		gpio = of_get_named_gpio(np, "fts,reset-gpio", 0);
+		if (gpio_is_valid(gpio)) {
+			ts->reset_gpio = gpio_to_desc(gpio);
+			if (!ts->reset_gpio)
+				return -EINVAL;
+			gpiod_direction_output(ts->reset_gpio, 1);
+		}
+	}
+
+	return 0;
 }
 
 static int fts_input_init(struct fts_ts *ts)
