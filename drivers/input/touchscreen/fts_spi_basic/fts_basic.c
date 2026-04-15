@@ -12,12 +12,12 @@
 #include <linux/input/mt.h>
 #include <linux/input/touchscreen.h>
 #include <linux/interrupt.h>
+#include <linux/irq.h>
 #include <linux/kernel.h>
 #include <linux/minmax.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/of.h>
-#include <linux/of_gpio.h>
 #include <linux/pm.h>
 #include <linux/regulator/consumer.h>
 #include <linux/spi/spi.h>
@@ -130,9 +130,9 @@ input_report_key(ts->input, BTN_TOOL_FINGER, 0);
 }
 
 static void fts_basic_report_down_event(struct fts_basic_ts *ts,
-const u8 *event)
+					const u8 *event)
 {
-unsigned int slot = event[1] >> 4;
+	unsigned int slot = event[1] >> 4;
 int x, y;
 int major, minor;
 int angle;
@@ -140,20 +140,21 @@ int angle;
 if (slot >= FTS_MAX_SLOTS)
 return;
 
-if (ts->super_resolution) {
-x = (event[3] << 8) | event[2];
-y = (event[5] << 8) | event[4];
-} else {
-x = ((event[3] & 0x0f) << 8) | event[2];
-y = (event[4] << 4) | ((event[3] & 0xf0) >> 4);
-}
+	if (ts->super_resolution) {
+		x = (event[3] << 8) | event[2];
+		y = (event[5] << 8) | event[4];
+		angle = 0;
+	} else {
+		x = ((event[3] & 0x0f) << 8) | event[2];
+		y = (event[4] << 4) | ((event[3] & 0xf0) >> 4);
+		angle = (s8)event[5];
+	}
 
 x = clamp_val(x, 0, ts->max_x - 1);
 y = clamp_val(y, 0, ts->max_y - 1);
 
-major = ((event[0] & 0x0c) << 2) | ((event[6] & 0xf0) >> 4);
-minor = ((event[7] & 0xc0) >> 2) | (event[6] & 0x0f);
-angle = (s8)event[5];
+	major = ((event[0] & 0x0c) << 2) | ((event[6] & 0xf0) >> 4);
+	minor = ((event[7] & 0xc0) >> 2) | (event[6] & 0x0f);
 
 input_mt_slot(ts->input, slot);
 input_mt_report_slot_state(ts->input, MT_TOOL_FINGER, true);
@@ -289,9 +290,8 @@ usleep_range(30000, 35000);
 
 static int fts_basic_parse_dt(struct fts_basic_ts *ts)
 {
-struct device_node *np = ts->dev->of_node;
-u32 value;
-int gpio;
+	struct device_node *np = ts->dev->of_node;
+	u32 value;
 
 if (of_property_read_u32(np, "fts,x-max", &ts->max_x))
 ts->max_x = 1080;
@@ -303,22 +303,12 @@ ts->super_resolution = !!value;
 else
 ts->super_resolution = true;
 
-ts->reset_gpio = devm_gpiod_get_optional(ts->dev, "reset",
- GPIOD_OUT_HIGH);
-if (IS_ERR(ts->reset_gpio))
-return PTR_ERR(ts->reset_gpio);
+	ts->reset_gpio = devm_gpiod_get_optional(ts->dev, "reset",
+						 GPIOD_OUT_HIGH);
+	if (IS_ERR(ts->reset_gpio))
+		return PTR_ERR(ts->reset_gpio);
 
-if (!ts->reset_gpio) {
-gpio = of_get_named_gpio(np, "fts,reset-gpio", 0);
-if (gpio_is_valid(gpio)) {
-ts->reset_gpio = gpio_to_desc(gpio);
-if (!ts->reset_gpio)
-return -EINVAL;
-gpiod_direction_output(ts->reset_gpio, 1);
-}
-}
-
-return 0;
+	return 0;
 }
 
 static int fts_basic_input_init(struct fts_basic_ts *ts)
@@ -470,14 +460,14 @@ static int __maybe_unused fts_basic_resume(struct device *dev)
 {
 struct fts_basic_ts *ts = dev_get_drvdata(dev);
 
-if (device_may_wakeup(dev))
-disable_irq_wake(ts->spi->irq);
+	if (device_may_wakeup(dev))
+		disable_irq_wake(ts->spi->irq);
 
-mutex_lock(&ts->lock);
-fts_basic_hw_reset(ts);
-fts_basic_start_scan(ts);
-ts->suspended = false;
-mutex_unlock(&ts->lock);
+	mutex_lock(&ts->lock);
+	ts->suspended = false;
+	fts_basic_hw_reset(ts);
+	fts_basic_start_scan(ts);
+	mutex_unlock(&ts->lock);
 
 return 0;
 }

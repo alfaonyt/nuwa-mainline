@@ -1048,6 +1048,7 @@
 		fts,irq-gpio = <&tlmm 25 0x2008>;
 		fts,irq-gpio-name = "fts_irq";
 		fts,reset-gpio-enable;
+		reset-gpios = <&tlmm 24 0>;
 		fts,reset-gpio = <&tlmm 24 0x00>;
 		fts,reset-gpio-name = "fts_rst";
 		fts,irq-flags = <0x2008>;
