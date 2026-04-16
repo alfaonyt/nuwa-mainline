@@ -171,15 +171,19 @@ static int st_fts_hw_init_sequence(struct st_fts_v521 *ts)
 {
 	int attempt;
 	int error;
+	bool ready_timeout;
 
 	for (attempt = 1; attempt <= ST_FTS_RESET_RETRY_COUNT; attempt++) {
 		st_fts_reset(ts);
+		ready_timeout = false;
 
 		error = st_fts_wait_for_ready(ts);
 		if (error) {
 			dev_warn(ts->dev, "ready wait failed on attempt %d: %d\n",
 				 attempt, error);
-			continue;
+			if (error != -ETIMEDOUT)
+				continue;
+			ready_timeout = true;
 		}
 
 		error = st_fts_flush_fifo(ts);
@@ -190,8 +194,13 @@ static int st_fts_hw_init_sequence(struct st_fts_v521 *ts)
 		}
 
 		error = st_fts_start_scan(ts);
-		if (!error)
+		if (!error) {
+			if (ready_timeout)
+				dev_warn(ts->dev,
+					 "continuing after ready timeout on attempt %d\n",
+					 attempt);
 			return 0;
+		}
 
 		dev_warn(ts->dev, "start scan failed on attempt %d: %d\n",
 			 attempt, error);
