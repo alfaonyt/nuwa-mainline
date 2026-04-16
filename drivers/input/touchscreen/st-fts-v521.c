@@ -194,8 +194,8 @@ input_report_key(ts->input, BTN_TOOL_FINGER, 0);
 
 static irqreturn_t st_fts_irq_thread(int irq, void *data)
 {
-struct st_fts_v521 *ts = data;
-u8 events[ST_FTS_FIFO_DEPTH * ST_FTS_FIFO_EVENT_SIZE] = { 0 };
+	struct st_fts_v521 *ts = data;
+	u8 events[ST_FTS_FIFO_DEPTH * ST_FTS_FIFO_EVENT_SIZE] = { 0 };
 unsigned int total_events = 1;
 unsigned int idx;
 int error;
@@ -205,19 +205,26 @@ mutex_lock(&ts->lock);
 if (ts->suspended)
 goto out;
 
-error = st_fts_spi_read_fifo(ts, events, 1);
-if (error)
-goto out;
+	error = st_fts_spi_read_fifo(ts, events, 1);
+	if (error) {
+		dev_err_ratelimited(ts->dev, "failed to read first FIFO event: %d\n",
+				    error);
+		goto out;
+	}
 
 total_events += events[7] & ST_FTS_FIFO_EVENTS_MASK;
 total_events = min_t(unsigned int, total_events, ST_FTS_FIFO_DEPTH);
 
 if (total_events > 1) {
-error = st_fts_spi_read_fifo(ts, events + ST_FTS_FIFO_EVENT_SIZE,
-     total_events - 1);
-if (error)
-goto out;
-}
+		error = st_fts_spi_read_fifo(ts, events + ST_FTS_FIFO_EVENT_SIZE,
+					     total_events - 1);
+		if (error) {
+			dev_err_ratelimited(ts->dev,
+					    "failed to read remaining FIFO events: %d\n",
+					    error);
+			goto out;
+		}
+	}
 
 for (idx = 0; idx < total_events; idx++) {
 const u8 *event = &events[idx * ST_FTS_FIFO_EVENT_SIZE];
@@ -233,13 +240,21 @@ break;
 case ST_FTS_EVT_LEAVE_POINT:
 st_fts_report_up(ts, event);
 break;
-case ST_FTS_EVT_CONTROLLER_READY:
-st_fts_start_scan(ts);
-break;
-default:
-break;
-}
-}
+		case ST_FTS_EVT_CONTROLLER_READY:
+			error = st_fts_start_scan(ts);
+			if (error) {
+				dev_warn_ratelimited(ts->dev,
+						     "controller-ready restart failed: %d\n",
+						     error);
+				goto out;
+			}
+			break;
+		default:
+			dev_dbg(ts->dev, "unhandled event: %*ph\n",
+				ST_FTS_FIFO_EVENT_SIZE, event);
+			break;
+		}
+	}
 
 input_mt_sync_frame(ts->input);
 input_sync(ts->input);
@@ -365,30 +380,38 @@ ts = devm_kzalloc(&spi->dev, sizeof(*ts), GFP_KERNEL);
 if (!ts)
 return -ENOMEM;
 
-ts->dev = &spi->dev;
-ts->spi = spi;
-mutex_init(&ts->lock);
-spi_set_drvdata(spi, ts);
+	ts->dev = &spi->dev;
+	if (!spi->bits_per_word)
+		spi->bits_per_word = 8;
+	error = spi_setup(spi);
+	if (error)
+		return dev_err_probe(&spi->dev, error, "failed to setup SPI\n");
 
-error = st_fts_parse_properties(ts);
-if (error)
-return error;
+	ts->spi = spi;
+	mutex_init(&ts->lock);
+	spi_set_drvdata(spi, ts);
 
-ts->vdd = devm_regulator_get_optional(ts->dev, "vdd");
-if (IS_ERR(ts->vdd)) {
-if (PTR_ERR(ts->vdd) == -ENODEV)
-ts->vdd = NULL;
-else
-return PTR_ERR(ts->vdd);
-}
+	error = st_fts_parse_properties(ts);
+	if (error)
+		return dev_err_probe(&spi->dev, error, "failed to parse DT properties\n");
 
-ts->avdd = devm_regulator_get_optional(ts->dev, "avdd");
-if (IS_ERR(ts->avdd)) {
-if (PTR_ERR(ts->avdd) == -ENODEV)
-ts->avdd = NULL;
-else
-return PTR_ERR(ts->avdd);
-}
+	ts->vdd = devm_regulator_get_optional(ts->dev, "vdd");
+	if (IS_ERR(ts->vdd)) {
+		if (PTR_ERR(ts->vdd) == -ENODEV)
+			ts->vdd = NULL;
+		else
+			return dev_err_probe(ts->dev, PTR_ERR(ts->vdd),
+					     "failed to get vdd regulator\n");
+	}
+
+	ts->avdd = devm_regulator_get_optional(ts->dev, "avdd");
+	if (IS_ERR(ts->avdd)) {
+		if (PTR_ERR(ts->avdd) == -ENODEV)
+			ts->avdd = NULL;
+		else
+			return dev_err_probe(ts->dev, PTR_ERR(ts->avdd),
+					     "failed to get avdd regulator\n");
+	}
 
 ts->fifo_buf = devm_kmalloc(ts->dev,
    ST_FTS_FIFO_DEPTH * ST_FTS_FIFO_EVENT_SIZE + 1,
@@ -396,38 +419,45 @@ ts->fifo_buf = devm_kmalloc(ts->dev,
 if (!ts->fifo_buf)
 return -ENOMEM;
 
-error = st_fts_power_on(ts);
-if (error)
-return error;
+	error = st_fts_power_on(ts);
+	if (error)
+		return dev_err_probe(ts->dev, error, "failed to enable power\n");
 
-st_fts_reset(ts);
+	st_fts_reset(ts);
 
 error = st_fts_init_input(ts);
 if (error)
 goto err_power_off;
 
-if (spi->irq <= 0) {
-error = -EINVAL;
-goto err_power_off;
-}
+	if (spi->irq <= 0) {
+		error = -EINVAL;
+		dev_err(ts->dev, "invalid IRQ %d\n", spi->irq);
+		goto err_power_off;
+	}
 
 irq_flags = irq_get_trigger_type(spi->irq);
 if (!irq_flags)
 irq_flags = IRQF_TRIGGER_FALLING;
 irq_flags |= IRQF_ONESHOT;
 
-error = devm_request_threaded_irq(ts->dev, spi->irq, NULL,
-  st_fts_irq_thread, irq_flags,
-  ST_FTS_V521_DRIVER_NAME, ts);
-if (error)
-goto err_power_off;
+	error = devm_request_threaded_irq(ts->dev, spi->irq, NULL,
+					  st_fts_irq_thread, irq_flags,
+					  ST_FTS_V521_DRIVER_NAME, ts);
+	if (error) {
+		dev_err(ts->dev, "failed to request IRQ %d: %d\n", spi->irq, error);
+		goto err_power_off;
+	}
 
-error = st_fts_start_scan(ts);
-if (error)
-goto err_power_off;
+	error = st_fts_start_scan(ts);
+	if (error) {
+		dev_err(ts->dev, "failed to start scan: %d\n", error);
+		goto err_power_off;
+	}
 
-device_init_wakeup(ts->dev, true);
-return 0;
+	device_init_wakeup(ts->dev, true);
+	dev_dbg(ts->dev, "initialized irq=%d max=(%u,%u) superres=%u\n",
+		spi->irq, ts->max_x, ts->max_y, ts->super_resolution);
+	return 0;
 
 err_power_off:
 st_fts_power_off(ts);
@@ -504,8 +534,9 @@ static const struct of_device_id st_fts_of_match[] = {
 MODULE_DEVICE_TABLE(of, st_fts_of_match);
 
 static const struct spi_device_id st_fts_id[] = {
-{ "st,fts-v521-spi", 0 },
-{ }
+	{ "st,fts-v521-spi", 0 },
+	{ "fts-v521-spi", 0 },
+	{ }
 };
 MODULE_DEVICE_TABLE(spi, st_fts_id);
 
