@@ -503,12 +503,19 @@ static const struct of_device_id st_fts_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, st_fts_of_match);
 
+static const struct spi_device_id st_fts_id[] = {
+{ "st,fts-v521-spi", 0 },
+{ }
+};
+MODULE_DEVICE_TABLE(spi, st_fts_id);
+
 static struct spi_driver st_fts_driver = {
 .driver = {
 .name = ST_FTS_V521_DRIVER_NAME,
 .of_match_table = st_fts_of_match,
 .pm = &st_fts_pm_ops,
 },
+.id_table = st_fts_id,
 .probe = st_fts_probe,
 .remove = st_fts_remove,
 };
