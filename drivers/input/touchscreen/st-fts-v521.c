@@ -13,6 +13,7 @@
 #include <linux/input/touchscreen.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
+#include <linux/jiffies.h>
 #include <linux/kernel.h>
 #include <linux/minmax.h>
 #include <linux/module.h>
@@ -25,8 +26,11 @@
 #define ST_FTS_V521_DRIVER_NAME            "st-fts-v521"
 
 #define ST_FTS_CMD_SCAN_MODE               0xA0
+#define ST_FTS_CMD_SYSTEM                  0xA4
 #define ST_FTS_SCAN_MODE_ACTIVE            0x00
 #define ST_FTS_ACTIVE_MULTI_TOUCH          0x01
+#define ST_FTS_SYS_CMD_SPECIAL             0x00
+#define ST_FTS_SPECIAL_FIFO_FLUSH          0x01
 
 #define ST_FTS_FIFO_CMD_READALL            0x87
 #define ST_FTS_FIFO_EVENT_SIZE             8
@@ -38,6 +42,9 @@
 #define ST_FTS_EVT_ENTER_POINT             0x13
 #define ST_FTS_EVT_MOTION_POINT            0x23
 #define ST_FTS_EVT_LEAVE_POINT             0x33
+
+#define ST_FTS_READY_TIMEOUT_MS            120
+#define ST_FTS_RESET_RETRY_COUNT           3
 
 #define ST_FTS_MAX_SLOTS                   10
 #define ST_FTS_SLOT_SHIFT                  4
@@ -67,6 +74,8 @@ u32 max_y;
 bool super_resolution;
 bool suspended;
 };
+
+static void st_fts_reset(struct st_fts_v521 *ts);
 
 static int st_fts_spi_write(struct st_fts_v521 *ts, const u8 *buf, size_t len)
 {
@@ -118,7 +127,77 @@ ST_FTS_SCAN_MODE_ACTIVE,
 0x00,
 };
 
-return st_fts_spi_write(ts, cmd, sizeof(cmd));
+	return st_fts_spi_write(ts, cmd, sizeof(cmd));
+}
+
+static int st_fts_flush_fifo(struct st_fts_v521 *ts)
+{
+	u8 cmd[] = {
+		ST_FTS_CMD_SYSTEM,
+		ST_FTS_SYS_CMD_SPECIAL,
+		ST_FTS_SPECIAL_FIFO_FLUSH,
+	};
+
+	return st_fts_spi_write(ts, cmd, sizeof(cmd));
+}
+
+static int st_fts_wait_for_ready(struct st_fts_v521 *ts)
+{
+	unsigned long timeout = jiffies + msecs_to_jiffies(ST_FTS_READY_TIMEOUT_MS);
+	u8 event[ST_FTS_FIFO_EVENT_SIZE] = { 0 };
+	int error;
+
+	do {
+		error = st_fts_spi_read_fifo(ts, event, 1);
+		if (error) {
+			usleep_range(3000, 5000);
+			continue;
+		}
+
+		if (event[0] == ST_FTS_EVT_CONTROLLER_READY)
+			return 0;
+
+		if (event[0] != ST_FTS_EVT_NOEVENT)
+			dev_dbg(ts->dev, "during-reset event: %*ph\n",
+				ST_FTS_FIFO_EVENT_SIZE, event);
+
+		usleep_range(3000, 5000);
+	} while (time_before(jiffies, timeout));
+
+	return -ETIMEDOUT;
+}
+
+static int st_fts_hw_init_sequence(struct st_fts_v521 *ts)
+{
+	int attempt;
+	int error;
+
+	for (attempt = 1; attempt <= ST_FTS_RESET_RETRY_COUNT; attempt++) {
+		st_fts_reset(ts);
+
+		error = st_fts_wait_for_ready(ts);
+		if (error) {
+			dev_warn(ts->dev, "ready wait failed on attempt %d: %d\n",
+				 attempt, error);
+			continue;
+		}
+
+		error = st_fts_flush_fifo(ts);
+		if (error) {
+			dev_warn(ts->dev, "fifo flush failed on attempt %d: %d\n",
+				 attempt, error);
+			continue;
+		}
+
+		error = st_fts_start_scan(ts);
+		if (!error)
+			return 0;
+
+		dev_warn(ts->dev, "start scan failed on attempt %d: %d\n",
+			 attempt, error);
+	}
+
+	return error;
 }
 
 static void st_fts_release_all_slots(struct st_fts_v521 *ts)
@@ -423,8 +502,6 @@ return -ENOMEM;
 	if (error)
 		return dev_err_probe(ts->dev, error, "failed to enable power\n");
 
-	st_fts_reset(ts);
-
 error = st_fts_init_input(ts);
 if (error)
 goto err_power_off;
@@ -448,9 +525,9 @@ irq_flags |= IRQF_ONESHOT;
 		goto err_power_off;
 	}
 
-	error = st_fts_start_scan(ts);
+	error = st_fts_hw_init_sequence(ts);
 	if (error) {
-		dev_err(ts->dev, "failed to start scan: %d\n", error);
+		dev_err(ts->dev, "failed to initialize controller: %d\n", error);
 		goto err_power_off;
 	}
 
@@ -512,13 +589,12 @@ if (error)
 dev_warn(dev, "failed to disable wake IRQ: %d\n", error);
 }
 
-mutex_lock(&ts->lock);
-ts->suspended = false;
-st_fts_reset(ts);
-error = st_fts_start_scan(ts);
-if (error)
-dev_warn(dev, "failed to restart scan: %d\n", error);
-mutex_unlock(&ts->lock);
+	mutex_lock(&ts->lock);
+	ts->suspended = false;
+	error = st_fts_hw_init_sequence(ts);
+	if (error)
+	dev_warn(dev, "failed to restart controller: %d\n", error);
+	mutex_unlock(&ts->lock);
 
 return 0;
 }
