@@ -38,8 +38,8 @@ extern struct fts_ts_info *fts_info;
 SysInfo systemInfo; /*Global System Info variable, accessible in all the driver*/
 /** @}*/
 
-static int reset_gpio =
-	GPIO_NOT_DEFINED; /*gpio number of the rest pin, the value is  GPIO_NOT_DEFINED if the reset pin is not connected*/
+static struct gpio_desc *reset_gpio;
+
 static int
 	system_reseted_up; /*flag checked during resume to understand if there was a system reset and restore the proper state*/
 static int
@@ -60,7 +60,7 @@ int initCore(struct fts_ts_info *info)
 	ret |= openChannel(info->client);
 	ret |= resetErrorList();
 	ret |= initTestToDo();
-	setResetGpio(info->board->reset_gpio);
+	setResetGpio(info->reset_gpio);
 	if (ret < OK) {
 		logError(0, "%s %s: Initialization Core ERROR %08X! \n", tag,
 			 __func__, ret);
@@ -75,10 +75,10 @@ int initCore(struct fts_ts_info *info)
 * Set the reset_gpio variable with the actual gpio number of the board link to the reset pin
 * @param gpio gpio number link to the reset pin of the IC
 */
-void setResetGpio(int gpio)
+void setResetGpio(struct gpio_desc *gpio)
 {
 	reset_gpio = gpio;
-	logError(0, "%s setResetGpio: reset_gpio = %d\n", tag, reset_gpio);
+	logError(0, "%s setResetGpio: reset_gpio = %p\n", tag, reset_gpio);
 }
 
 /**
@@ -104,16 +104,12 @@ int fts_system_reset(void)
 		resetErrorList();
 		fts_disableInterruptNoSync();
 
-		if (reset_gpio == GPIO_NOT_DEFINED) {
-			res = fts_writeU8UX(FTS_CMD_HW_REG_W, ADDR_SIZE_HW_REG,
-					    ADDR_SYSTEM_RESET, data,
-					    ARRAY_SIZE(data));
-		} else {
-			gpio_set_value(reset_gpio, 0);
-			mdelay(10);
-			gpio_set_value(reset_gpio, 1);
-			res = OK;
-		}
+		gpiod_set_value_cansleep(reset_gpio, 0);
+		usleep_range(10000, 11000);
+		gpiod_set_value_cansleep(reset_gpio, 1);
+		msleep(200);
+		res = OK;
+
 		if (res < OK) {
 			logError(1, "%s fts_system_reset: ERROR %08X\n", tag,
 				 ERROR_BUS_W);
@@ -233,7 +229,9 @@ int pollForEvent(int *event_to_search, int event_bytes, u8 *readData,
 					 printHex("READ EVENT = ", readData,
 						  FIFO_EVENT_SIZE, temp));
 				memset(temp, 0, 128);
-			}
+			} else
+				logError(1,"%s DEBUG: %02x %02x %02x", tag,
+					readData[0], readData[1], readData[2]);
 			if (readData[0] == EVT_ID_CONTROLLER_READY &&
 			    event_to_search[0] != EVT_ID_CONTROLLER_READY) {
 				logError(
@@ -250,6 +248,7 @@ int pollForEvent(int *event_to_search, int event_bytes, u8 *readData,
 		for (i = 0; i < event_bytes; i++) {
 			if (event_to_search[i] != -1 &&
 			    (int)readData[i] != event_to_search[i]) {
+			    logError(1, "%s DEBUG pollEvent: %u", tag, readData[i]);
 				find = 0;
 				break;
 			}

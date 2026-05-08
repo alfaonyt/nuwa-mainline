@@ -43,6 +43,10 @@
 #include <linux/sched.h>
 #include <uapi/linux/sched/types.h>
 
+#ifdef FTS_XIAOMI_TOUCHFEATURE
+#include "../xiaomi/xiaomi_touch.h"
+#endif
+
 /****************** CONFIGURATION SECTION ******************/
 /** @defgroup conf_section	 Driver Configuration Section
 * Settings of the driver code in order to suit the HW set up and the application behavior
@@ -50,13 +54,23 @@
 */
 
 /**** CODE CONFIGURATION ****/
+#ifdef CONFIG_TOUCHSCREEN_ST_FTS_V521_SPI_SECONDARY
+#define FTS_TS_DRV_NAME "fts-sec" /*driver name*/
+#else
 #define FTS_TS_DRV_NAME "fts" /*driver name*/
+#endif
 #define FTS_TS_DRV_VERSION "5.2.4.1" /*driver version string format*/
 #define FTS_TS_DRV_VER 0x05020401 /*driver version u32 format*/
 
+#ifdef CONFIG_TOUCHSCREEN_ST_FTS_V521_SPI_SECONDARY
+#define PINCTRL_STATE_ACTIVE "pmx_ts_sec_active"
+#define PINCTRL_STATE_SUSPEND "pmx_ts_sec_suspend"
+#define PINCTRL_STATE_RELEASE "pmx_ts_sec_release"
+#else
 #define PINCTRL_STATE_ACTIVE "pmx_ts_active"
 #define PINCTRL_STATE_SUSPEND "pmx_ts_suspend"
 #define PINCTRL_STATE_RELEASE "pmx_ts_release"
+#endif
 
 /*** save power mode ***/
 #define FTS_POWER_SAVE_MODE
@@ -69,24 +83,22 @@
 #define PRE_SAVED_METHOD
 
 /*#define FW_H_FILE*/
-//#define FTS_FW_UPDATE
-//#define FW_UPDATE_ON_PROBE
-//#ifdef FW_H_FILE
-//#define FW_SIZE_NAME myArray_size
-//#define FW_ARRAY_NAME myArray
-//#endif
+#define FTS_FW_UPDATE
+#define FW_UPDATE_ON_PROBE
+#ifdef FW_H_FILE
+#define FW_SIZE_NAME myArray_size
+#define FW_ARRAY_NAME myArray
+#endif
 
 /*#define LIMITS_H_FILE*/
-//#ifdef LIMITS_H_FILE
-//#define LIMITS_SIZE_NAME myArray2_size
-//#define LIMITS_ARRAY_NAME myArray2
-//#endif
+#ifdef LIMITS_H_FILE
+#define LIMITS_SIZE_NAME myArray2_size
+#define LIMITS_ARRAY_NAME myArray2
+#endif
 
-//#define FTS_XIAOMI_TOUCHFEATURE
-//#define FTS_FOD_AREA_REPORT
 #define FTS_DEBUG_FS
 
-#define DEBUG
+// #define FTS_DEBUG
 
 /*#define USE_ONE_FILE_NODE*/
 
@@ -100,20 +112,11 @@
 
 /*#define PHONE_KEY*/
 
-//#define GESTURE_MODE
+#define GESTURE_MODE
 #ifdef GESTURE_MODE
 #define USE_GESTURE_MASK
 #endif
 
-//#define CHARGER_MODE
-
-//#define GLOVE_MODE
-
-//#define COVER_MODE
-
-//#define STYLUS_MODE
-
-/**** END ****/
 
 /**** PANEL SPECIFICATION ****/
 #define X_AXIS_MAX 1080
@@ -181,7 +184,7 @@
 #define GRIP_PARAMETER_NUM 8
 #define EXPERT_ARRAY_SIZE 3
 
-#define CONFIG_FTS_POWERSUPPLY_CB
+// #define CONFIG_FTS_POWERSUPPLY_CB
 
 enum charge_status {
 	NOT_CHARGING,
@@ -203,6 +206,7 @@ struct fts_hw_platform_data {
 	int (*power)(bool on);
 	int irq_gpio;
 	int reset_gpio;
+	int avdd_gpio;
 	unsigned long irq_flags;
 	unsigned int x_max;
 	unsigned int y_max;
@@ -213,7 +217,6 @@ struct fts_hw_platform_data {
 	size_t config_array_size;
 	struct fts_config_info *config_array;
 	int current_index;
-	u32 support_super_resolution;
 #ifdef PHONE_KEY
 	size_t nbuttons;
 	int *key_code;
@@ -225,33 +228,6 @@ struct fts_hw_platform_data {
 	unsigned int fod_ly;
 	unsigned int fod_x_size;
 	unsigned int fod_y_size;
-#ifdef FTS_XIAOMI_TOUCHFEATURE
-	u32 touch_follow_per_def;
-	u32 touch_tap_sensitivity_def;
-	u32 touch_aim_sensitivity_def;
-	u32 touch_tap_stability_def;
-	u32 cornerfilter_area_step1;
-	u32 cornerfilter_area_step2;
-	u32 cornerfilter_area_step3;
-	u32 non_curved_display;
-	u32 support_super_resolution;
-	u32 deadzone_filter_ver[4 * GRIP_PARAMETER_NUM];
-	u32 deadzone_filter_hor[4 * GRIP_PARAMETER_NUM];
-	u32 edgezone_filter_ver[4 * GRIP_PARAMETER_NUM];
-	u32 edgezone_filter_hor[4 * GRIP_PARAMETER_NUM];
-	u32 cornerzone_filter_ver[4 * GRIP_PARAMETER_NUM];
-	u32 cornerzone_filter_hor1[4 * GRIP_PARAMETER_NUM];
-	u32 cornerzone_filter_hor2[4 * GRIP_PARAMETER_NUM];
-	u32 normal_deadzone_filter_hor[4 * GRIP_PARAMETER_NUM];
-	u32 normal_edgezone_filter_hor[4 * GRIP_PARAMETER_NUM];
-	u32 normal_cornerzone_filter_hor1[4 * GRIP_PARAMETER_NUM];
-	u32 normal_cornerzone_filter_hor2[4 * GRIP_PARAMETER_NUM];
-	u32 touch_follow_performance[3 * 5];
-	u32 touch_tap_sensitivity[5];
-	u32 touch_aim_sensitivity[5];
-	u32 touch_tap_stability[5];
-	u32 touch_expert_array[6 * EXPERT_ARRAY_SIZE];
-#endif
 	bool support_fod;
 	bool support_thp;
 	bool support_thp_fw;
@@ -262,7 +238,11 @@ struct fts_hw_platform_data {
  * Forward declaration
  */
 struct fts_ts_info;
+#ifdef CONFIG_TOUCHSCREEN_ST_FTS_V521_SPI_SECONDARY
+extern char tag[12];
+#else
 extern char tag[8];
+#endif
 
 /*
  * Dispatch event handler
@@ -370,6 +350,9 @@ struct fts_ts_info {
 	struct regulator *avdd_reg;
 	struct regulator *avddold_reg;
 
+	struct gpio_desc *irq_gpio;
+	struct gpio_desc *reset_gpio;
+
 	int resume_bit;
 	int fwupdate_stat;
 
@@ -396,6 +379,7 @@ struct fts_ts_info {
 	int stylus_enabled;
 	int cover_enabled;
 	unsigned int grip_enabled;
+	bool grip_rejection_enabled;
 	unsigned int grip_pixel;
 	unsigned int doze_time;
 	unsigned int grip_pixel_def;
@@ -419,9 +403,6 @@ struct fts_ts_info {
 	struct mutex fod_mutex;
 	struct mutex cmd_update_mutex;
 	bool fod_pressed;
-	bool prox_sensor_changed;
-	bool prox_sensor_switch;
-	bool palm_sensor_switch;
 	bool enable_touch_raw;
 	bool enable_touch_delta;
 	bool enable_thp_fw;
@@ -467,10 +448,5 @@ bool fts_is_infod(void);
 #endif
 void fts_restore_regvalues(void);
 const char *fts_get_limit(struct fts_ts_info *info);
-#ifdef FTS_XIAOMI_TOUCHFEATURE
-int fts_palm_sensor_cmd(int input);
-int fts_prox_sensor_cmd(int input);
-bool fts_touchmode_edgefilter(unsigned int touch_id, int x, int y);
-#endif
 #endif
 int fts_enable_thp_selfcap_scan(int en);

@@ -30,12 +30,7 @@
 #include <linux/ctype.h>
 #include <linux/of_gpio.h>
 
-#ifdef I2C_INTERFACE
-#include <linux/i2c.h>
-#include <linux/i2c-dev.h>
-static u16 I2CSAD;
 #include <linux/spi/spidev.h>
-#endif
 
 static void *client;
 
@@ -66,7 +61,7 @@ int openChannel(void *clt)
 		1,
 		"%s %s: spi_device: max_speed = %d chip select = %02X bits_per_words = %d mode = %04X !\n",
 		tag, __func__, ((struct spi_device *)client)->max_speed_hz,
-		((struct spi_device *)client)->chip_select[0],
+		((struct spi_device *)client)->chip_select,
 		((struct spi_device *)client)->bits_per_word,
 		((struct spi_device *)client)->mode);
 	logError(1, "%s openChannel: completed! \n", tag);
@@ -147,16 +142,8 @@ int fts_read(u8 *outBuf, int byteToRead)
 	int ret = -1;
 	int retry = 0;
 
-#ifdef I2C_INTERFACE
-	struct i2c_msg I2CMsg[1];
-
-	I2CMsg[0].addr = (__u16)I2CSAD;
-	I2CMsg[0].flags = (__u16)I2C_M_RD;
-	I2CMsg[0].len = (__u16)byteToRead;
-	I2CMsg[0].buf = (__u8 *)outBuf;
-#else
 	struct spi_message msg;
-	struct spi_transfer transfer[1] = { { 0 } };
+	struct spi_transfer transfer[2] = { { 0 } };
 
 	spi_message_init(&msg);
 
@@ -164,9 +151,8 @@ int fts_read(u8 *outBuf, int byteToRead)
 	transfer[0].delay.value = SPI_DELAY_CS;
 	transfer[0].tx_buf = NULL;
 	transfer[0].rx_buf = outBuf;
+	transfer[0].cs_change = 1;
 	spi_message_add_tail(&transfer[0], &msg);
-#endif
-
 	if (client == NULL)
 		return ERROR_BUS_O;
 	if (fts_info && fts_info->tp_pm_suspend) {
@@ -175,12 +161,7 @@ int fts_read(u8 *outBuf, int byteToRead)
 		return ERROR_BUS_O;
 	}
 	while (retry < I2C_RETRY && ret < OK) {
-#ifdef I2C_INTERFACE
-		ret = i2c_transfer(getClient()->adapter, I2CMsg, 1);
-#else
 		ret = spi_sync(getClient(), &msg);
-#endif
-
 		retry++;
 		if (ret < OK)
 			mdelay(I2C_WAIT_BEFORE_RETRY);
@@ -191,6 +172,55 @@ int fts_read(u8 *outBuf, int byteToRead)
 	}
 	return OK;
 }
+/* int fts_read(u8 *cmd, int cmdlen, u8 *outBuf, int byteToRead)
+{
+        int ret = -1;
+        int retry = 0;
+
+        struct spi_message msg;
+        struct spi_transfer transfer[2] = { { 0 } };
+
+        if (client == NULL)
+                return ERROR_BUS_O;
+
+        if (fts_info && fts_info->tp_pm_suspend) {
+                logError(1, "%s %s system suspend,don't do transfer\n", tag,
+                         __func__);
+                return ERROR_BUS_O;
+        }
+
+        while (retry < I2C_RETRY && ret < OK) {
+
+                spi_message_init(&msg);
+
+                transfer[0].tx_buf = cmd;
+                transfer[0].rx_buf = NULL;
+                transfer[0].len = cmdlen;
+                transfer[0].delay.value = SPI_DELAY_CS;
+                transfer[0].cs_change = 0;
+
+                transfer[1].tx_buf = NULL;
+                transfer[1].rx_buf = outBuf;
+                transfer[1].len = byteToRead;
+                transfer[1].delay.value = SPI_DELAY_CS;
+
+                spi_message_add_tail(&transfer[0], &msg);
+                spi_message_add_tail(&transfer[1], &msg);
+
+                ret = spi_sync(getClient(), &msg);
+                retry++;
+
+                if (ret < OK)
+                        mdelay(I2C_WAIT_BEFORE_RETRY);
+        }
+
+        if (ret < 0) {
+                logError(1, "%s %s: ERROR %08X\n", tag, __func__, ERROR_BUS_R);
+                return ERROR_BUS_R;
+        }
+
+        return OK;
+} */
 
 /**
 * Perform a bus write followed by a bus read without a stop condition
@@ -205,20 +235,6 @@ int fts_writeRead(u8 *cmd, int cmdLength, u8 *outBuf, int byteToRead)
 	int ret = -1;
 	int retry = 0;
 
-#ifdef I2C_INTERFACE
-	struct i2c_msg I2CMsg[2];
-
-	I2CMsg[0].addr = (__u16)I2CSAD;
-	I2CMsg[0].flags = (__u16)0;
-	I2CMsg[0].len = (__u16)cmdLength;
-	I2CMsg[0].buf = (__u8 *)cmd;
-
-	I2CMsg[1].addr = (__u16)I2CSAD;
-	I2CMsg[1].flags = I2C_M_RD;
-	I2CMsg[1].len = byteToRead;
-	I2CMsg[1].buf = (__u8 *)outBuf;
-
-#else
 	struct spi_message msg;
 	struct spi_transfer transfer[2] = { { 0 }, { 0 } };
 
@@ -235,8 +251,6 @@ int fts_writeRead(u8 *cmd, int cmdLength, u8 *outBuf, int byteToRead)
 	transfer[1].rx_buf = outBuf;
 	spi_message_add_tail(&transfer[1], &msg);
 
-#endif
-
 	if (client == NULL)
 		return ERROR_BUS_O;
 
@@ -247,12 +261,7 @@ int fts_writeRead(u8 *cmd, int cmdLength, u8 *outBuf, int byteToRead)
 	}
 
 	while (retry < I2C_RETRY && ret < OK) {
-#ifdef I2C_INTERFACE
-		ret = i2c_transfer(getClient()->adapter, I2CMsg, 2);
-#else
 		ret = spi_sync(getClient(), &msg);
-#endif
-
 		retry++;
 		if (ret < OK)
 			mdelay(I2C_WAIT_BEFORE_RETRY);
@@ -275,14 +284,6 @@ int fts_write(u8 *cmd, int cmdLength)
 	int ret = -1;
 	int retry = 0;
 
-#ifdef I2C_INTERFACE
-	struct i2c_msg I2CMsg[1];
-
-	I2CMsg[0].addr = (__u16)I2CSAD;
-	I2CMsg[0].flags = (__u16)0;
-	I2CMsg[0].len = (__u16)cmdLength;
-	I2CMsg[0].buf = (__u8 *)cmd;
-#else
 	struct spi_message msg;
 	struct spi_transfer transfer[1] = { { 0 } };
 
@@ -293,7 +294,6 @@ int fts_write(u8 *cmd, int cmdLength)
 	transfer[0].tx_buf = cmd;
 	transfer[0].rx_buf = NULL;
 	spi_message_add_tail(&transfer[0], &msg);
-#endif
 
 	if (client == NULL)
 		return ERROR_BUS_O;
@@ -303,11 +303,7 @@ int fts_write(u8 *cmd, int cmdLength)
 		return ERROR_BUS_O;
 	}
 	while (retry < I2C_RETRY && ret < OK) {
-#ifdef I2C_INTERFACE
-		ret = i2c_transfer(getClient()->adapter, I2CMsg, 1);
-#else
 		ret = spi_sync(getClient(), &msg);
-#endif
 
 		retry++;
 		if (ret < OK)

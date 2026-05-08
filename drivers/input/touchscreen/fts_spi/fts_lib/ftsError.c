@@ -42,7 +42,7 @@ static ErrorList errors;
 void logError(int force, const char *msg, ...)
 {
 	if (force == 1
-#ifdef DEBUG
+#ifdef FTS_DEBUG
 	    || 1
 #endif
 	) {

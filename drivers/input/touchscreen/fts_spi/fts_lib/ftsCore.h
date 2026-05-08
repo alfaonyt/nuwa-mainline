@@ -164,7 +164,7 @@ typedef struct {
 /** @}*/
 
 int initCore(struct fts_ts_info *info);
-void setResetGpio(int gpio);
+void setResetGpio(struct gpio_desc *gpio);
 int fts_system_reset(void);
 int isSystemResettedUp(void);
 int isSystemResettedDown(void);
