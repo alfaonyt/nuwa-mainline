@@ -27,6 +27,9 @@ struct m2_38_0c_0a_dsc {
 	struct drm_dsc_config dsc;
 	struct gpio_desc *reset_gpio;
 	int hbm_enabled;
+	int pwm_16pulse;
+	u8 panel_build_id;
+	unsigned int refresh_rate;
 
 	struct regulator *avdd;
 	struct regulator *vci;
@@ -241,6 +244,18 @@ static int m2_38_0c_0a_dsc_prepare_mode(struct drm_panel *panel, unsigned int ra
 		goto reset;
 
 	msleep(28);
+	ctx->refresh_rate = rate;
+	ctx->pwm_16pulse = -1;
+	ctx->panel_build_id = 0;
+	ret = mipi_dsi_dcs_read(ctx->dsi, 0xda, &ctx->panel_build_id, 1);
+	if (ret == 1 && ctx->panel_build_id == 0x40)
+		ret = mipi_dsi_dcs_read(ctx->dsi, 0x1d, &ctx->panel_build_id, 1);
+	if (ret != 1) {
+		ctx->panel_build_id = 0;
+		dev_warn(dev, "failed to read panel build ID: %d\n", ret);
+	} else {
+		dev_info(dev, "panel build ID: %#02x\n", ctx->panel_build_id);
+	}
 	return 0;
 
 reset:
@@ -352,6 +367,91 @@ static const struct drm_panel_funcs m2_38_0c_0a_dsc_panel_funcs = {
 	.mode_valid = m2_38_0c_0a_dsc_mode_valid,
 };
 
+static int m2_38_0c_0a_dsc_set_pwm(struct m2_38_0c_0a_dsc *ctx, u16 brightness)
+{
+	struct mipi_dsi_device *dsi = ctx->dsi;
+	struct mipi_dsi_multi_context seq = { .dsi = dsi };
+	bool low = brightness <= 328;
+	u8 cycle = (ctx->refresh_rate == 120 ? 0x00 : 0x80) | (low ? 0x0f : 0x02);
+	const u8 gamma_auto[] = { 0x01, 0x00, 0x02, 0x00, 0x03, 0x00, 0x04,
+				  0x00, 0x05, 0x00, 0x07, 0x00, 0x0b, 0x00 };
+	const u8 gamma_low[] = { 0x10, 0x00, 0x20, 0x00, 0x30, 0x00, 0x40,
+				 0x00, 0x05, 0x00, 0x70, 0x00, 0xb0, 0x00 };
+	const u8 gamma_high[] = { 0x03, 0x00, 0x06, 0x00, 0x09, 0x00, 0x0c,
+				  0x00, 0x01, 0x00, 0x15, 0x00, 0x21, 0x00 };
+	const u8 *gamma = ctx->refresh_rate == 120 ? gamma_auto :
+			  low ? gamma_low : gamma_high;
+
+	if (!brightness || !ctx->panel_build_id || ctx->panel_build_id == 0xfb ||
+	    ctx->panel_build_id == 0x50 || ctx->panel_build_id == 0xb0 ||
+	    ctx->pwm_16pulse == low)
+		return 0;
+
+	mipi_dsi_dcs_write_seq_multi(&seq, 0xf0, 0x5a, 0x5a);
+	mipi_dsi_dcs_write_var_seq_multi(&seq, 0xbd, 0x21, cycle);
+	mipi_dsi_dcs_write_seq_multi(&seq, 0xb0, 0x00, 0x21, 0xbd);
+	if (!seq.accum_err)
+		seq.accum_err = mipi_dsi_dcs_write(dsi, 0xbd, gamma, sizeof(gamma_auto));
+	if (seq.accum_err > 0)
+		seq.accum_err = 0;
+	mipi_dsi_dcs_write_seq_multi(&seq, 0xb0, 0x00, 0x0c, 0x63);
+	mipi_dsi_dcs_write_seq_multi(&seq, 0x63, 0x20);
+	mipi_dsi_dcs_write_seq_multi(&seq, 0xb0, 0x03, 0x37, 0x65);
+	mipi_dsi_dcs_write_var_seq_multi(&seq, 0x65, low ? 0x04 : 0x01);
+	mipi_dsi_dcs_write_var_seq_multi(&seq, 0xbd, 0x21, cycle);
+	mipi_dsi_dcs_write_var_seq_multi(&seq, 0x51, brightness >> 8, brightness & 0xff);
+	mipi_dsi_dcs_write_seq_multi(&seq, 0xf7, 0x0f);
+	mipi_dsi_dcs_write_seq_multi(&seq, 0xf0, 0xa5, 0xa5);
+	mipi_dsi_msleep(&seq, ctx->refresh_rate == 120 ? 8 : 17);
+	if (!seq.accum_err && ctx->refresh_rate == 120) {
+		/* Downstream reapplies the 120 Hz auto-mode timing after a switch. */
+		dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+		mipi_dsi_dcs_write_seq_multi(&seq, 0x2a, 0x00, 0x00, 0x05, 0x9f);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0x2b, 0x00, 0x00, 0x0c, 0x7f);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xf0, 0x5a, 0x5a);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xc3, 0x0c);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xf0, 0xa5, 0xa5);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xf0, 0x5a, 0x5a);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xb9, 0x41);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xb0, 0x00, 0x06, 0xb9);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xb9, 0x0c, 0x9e, 0x0c, 0x9e, 0x00, 0x1d);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xf7, 0x0f);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xf0, 0xa5, 0xa5);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xf0, 0x5a, 0x5a);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xb0, 0x00, 0x08, 0xcb);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xcb, 0x12);
+		mipi_dsi_dcs_write_var_seq_multi(&seq, 0xbd, 0x21, cycle);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xb0, 0x00, 0x10, 0xbd);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xbd, 0x00);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xb0, 0x00, 0x21, 0xbd);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xbd, 0x01, 0x00, 0x02, 0x00,
+					     0x03, 0x00, 0x04, 0x00, 0x05, 0x00,
+					     0x07, 0x00, 0x0b, 0x00);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xb0, 0x00, 0x61, 0xbd);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xbd, 0x01, 0x00, 0x02, 0x00,
+					     0x03, 0x00, 0x04, 0x00, 0x1d);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xb0, 0x00, 0x12, 0xbd);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xbd, 0x00);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xb0, 0x00, 0x17, 0xbd);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xbd, 0x00);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xbd, 0x23);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xb0, 0x00, 0x14, 0xbd);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xbd, 0x01);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xb0, 0x00, 0x16, 0xbd);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xbd, 0x00, 0x00);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xf7, 0x0f);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xf0, 0xa5, 0xa5);
+		dsi->mode_flags |= MIPI_DSI_MODE_LPM;
+	}
+	if (seq.accum_err) {
+		ctx->pwm_16pulse = -1;
+		mipi_dsi_dcs_write(dsi, 0xf0, (u8[]){ 0xa5, 0xa5 }, 2);
+		return seq.accum_err;
+	}
+	ctx->pwm_16pulse = low;
+	return 0;
+}
+
 static int m2_38_0c_0a_dsc_bl_update_status(struct backlight_device *bl)
 {
 	struct mipi_dsi_device *dsi = bl_get_data(bl);
@@ -360,6 +460,12 @@ static int m2_38_0c_0a_dsc_bl_update_status(struct backlight_device *bl)
 	u16 brightness = backlight_get_brightness(bl);
 	bool hbm = brightness > 2047;
 	int ret;
+
+	if (hbm) {
+		ret = m2_38_0c_0a_dsc_set_pwm(ctx, brightness);
+		if (ret < 0)
+			return ret;
+	}
 
 	/* The panel uses separate normal and HBM ranges, joined at 0x07ff. */
 	if (hbm != ctx->hbm_enabled) {
@@ -383,6 +489,12 @@ static int m2_38_0c_0a_dsc_bl_update_status(struct backlight_device *bl)
 			return dsi_ctx.accum_err;
 		}
 		ctx->hbm_enabled = hbm;
+	}
+
+	if (!hbm) {
+		ret = m2_38_0c_0a_dsc_set_pwm(ctx, brightness);
+		if (ret < 0)
+			return ret;
 	}
 
 	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
