@@ -1086,12 +1086,13 @@
 };
 
 &spi9 {
-       status = "okay";
-       ir-spi@0 {
-               reg = <0>;
-               compatible = "ir-spi";
-               spi-max-frequency = <19200000>;
-       };
+	status = "okay";
+
+	ir-led@0 {
+		compatible = "ir-spi-led";
+		reg = <0>;
+		spi-max-frequency = <19200000>;
+	};
 };
 
 &i2c_master_hub_0 {
