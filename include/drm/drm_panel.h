@@ -30,10 +30,14 @@
 #include <linux/mutex.h>
 #include <linux/kref.h>
 
+#include <drm/drm_modes.h>
+
 struct backlight_device;
 struct dentry;
 struct device_node;
+struct drm_atomic_commit;
 struct drm_connector;
+struct drm_crtc;
 struct drm_panel_follower;
 struct drm_panel;
 struct display_timing;
@@ -81,6 +85,14 @@ struct drm_panel_funcs {
 	int (*prepare)(struct drm_panel *panel);
 
 	/**
+	 * @atomic_prepare: Prepare the panel using the new CRTC state.
+	 *
+	 * Called in preference to @prepare when atomic state is available.
+	 */
+	int (*atomic_prepare)(struct drm_panel *panel, struct drm_crtc *crtc,
+			      struct drm_atomic_commit *state);
+
+	/**
 	 * @enable:
 	 *
 	 * Enable panel (turn on back light, etc.).
@@ -117,6 +129,12 @@ struct drm_panel_funcs {
 	 */
 	int (*get_modes)(struct drm_panel *panel,
 			 struct drm_connector *connector);
+
+	/**
+	 * @mode_valid: Reject modes that cannot be configured on the panel.
+	 */
+	enum drm_mode_status (*mode_valid)(struct drm_panel *panel,
+					   const struct drm_display_mode *mode);
 
 	/**
 	 * @get_orientation:
@@ -328,6 +346,8 @@ void drm_panel_remove(struct drm_panel *panel);
 int devm_drm_panel_add(struct device *dev, struct drm_panel *panel);
 
 void drm_panel_prepare(struct drm_panel *panel);
+void drm_panel_atomic_prepare(struct drm_panel *panel, struct drm_crtc *crtc,
+			      struct drm_atomic_commit *state);
 void drm_panel_unprepare(struct drm_panel *panel);
 
 void drm_panel_enable(struct drm_panel *panel);

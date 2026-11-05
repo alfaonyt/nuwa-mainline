@@ -14,6 +14,8 @@
 
 #include <drm/display/drm_dsc.h>
 #include <drm/display/drm_dsc_helper.h>
+#include <drm/drm_atomic.h>
+#include <drm/drm_crtc.h>
 #include <drm/drm_mipi_dsi.h>
 #include <drm/drm_modes.h>
 #include <drm/drm_panel.h>
@@ -24,6 +26,10 @@ struct m2_38_0c_0a_dsc {
 	struct mipi_dsi_device *dsi;
 	struct drm_dsc_config dsc;
 	struct gpio_desc *reset_gpio;
+	int hbm_enabled;
+	int pwm_16pulse;
+	u8 panel_build_id;
+	unsigned int refresh_rate;
 
 	struct regulator *avdd;
 	struct regulator *vci;
@@ -45,7 +51,7 @@ static void m2_38_0c_0a_dsc_reset(struct m2_38_0c_0a_dsc *ctx)
 	usleep_range(5000, 6000);
 }
 
-static int m2_38_0c_0a_dsc_on(struct m2_38_0c_0a_dsc *ctx)
+static int m2_38_0c_0a_dsc_on(struct m2_38_0c_0a_dsc *ctx, u8 refresh)
 {
 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
 
@@ -104,7 +110,7 @@ static int m2_38_0c_0a_dsc_on(struct m2_38_0c_0a_dsc *ctx)
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x00, 0x16, 0xbd);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xbd, 0x00, 0x00);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xbd, 0x21);
-	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x60, 0x00); /* 0x00:120Hz, 0x01:60Hz, 0x03:30Hz, 0x07:10Hz */
+	mipi_dsi_dcs_write_var_seq_multi(&dsi_ctx, 0x60, refresh);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf7, 0x0f);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
@@ -179,83 +185,128 @@ static int m2_38_0c_0a_dsc_off(struct m2_38_0c_0a_dsc *ctx)
 	return dsi_ctx.accum_err;
 }
 
-static int m2_38_0c_0a_dsc_prepare(struct drm_panel *panel)
+#define M2_MODE_CLOCK(rate) ((1440 + 32 + 16 + 32) * (3200 + 24 + 8 + 24) * (rate) / 1000)
+
+static int m2_38_0c_0a_dsc_prepare_mode(struct drm_panel *panel, unsigned int rate)
 {
 	struct m2_38_0c_0a_dsc *ctx = to_m2_38_0c_0a_dsc(panel);
 	struct device *dev = &ctx->dsi->dev;
 	struct drm_dsc_picture_parameter_set pps;
+	u8 refresh;
 	int ret;
 
-	ret = regulator_enable(ctx->avdd);
-	if (ret) {
-		dev_err(dev, "failed to enable avdd regulator: %d\n", ret);
-		return ret;
-	}
-	
-	ret = regulator_enable(ctx->vci);
-	if (ret) {
-		dev_err(dev, "failed to enable vci regulator: %d\n", ret);
-		return ret;
+	switch (rate) {
+	case 120:
+		refresh = 0x00;
+		break;
+	case 60:
+		refresh = 0x01;
+		break;
+	case 40:
+		refresh = 0x02;
+		break;
+	case 30:
+		refresh = 0x03;
+		break;
+	case 24:
+		refresh = 0x04;
+		break;
+	default:
+		return dev_err_probe(dev, -EINVAL, "unsupported refresh rate %u\n", rate);
 	}
 
+	ret = regulator_enable(ctx->avdd);
+	if (ret)
+		return ret;
+	ret = regulator_enable(ctx->vci);
+	if (ret)
+		goto disable_avdd;
 	ret = regulator_enable(ctx->vddio);
-	if (ret) {
-		dev_err(dev, "failed to enable vddio regulator: %d\n", ret);
-		return ret;
-	}
-	
+	if (ret)
+		goto disable_vci;
 	ret = regulator_enable(ctx->vddd);
-	if (ret) {
-		dev_err(dev, "failed to enable vddd regulator: %d\n", ret);
-		return ret;
-	}
+	if (ret)
+		goto disable_vddio;
 
 	m2_38_0c_0a_dsc_reset(ctx);
 
-	ret = m2_38_0c_0a_dsc_on(ctx);
-	if (ret < 0) {
-		dev_err(dev, "Failed to initialize panel: %d\n", ret);
-		gpiod_set_value_cansleep(ctx->reset_gpio, 1);
-		return ret;
-	}
+	ret = m2_38_0c_0a_dsc_on(ctx, refresh);
+	if (ret < 0)
+		goto reset;
+	ctx->hbm_enabled = false;
 
 	drm_dsc_pps_payload_pack(&pps, &ctx->dsc);
-
 	ret = mipi_dsi_picture_parameter_set(ctx->dsi, &pps);
-	if (ret < 0) {
-		dev_err(panel->dev, "failed to transmit PPS: %d\n", ret);
-		return ret;
-	}
-
+	if (ret < 0)
+		goto reset;
 	ret = mipi_dsi_compression_mode(ctx->dsi, true);
-	if (ret < 0) {
-		dev_err(dev, "failed to enable compression mode: %d\n", ret);
-		return ret;
+	if (ret < 0)
+		goto reset;
+
+	msleep(28);
+	ctx->refresh_rate = rate;
+	ctx->pwm_16pulse = -1;
+	ctx->panel_build_id = 0;
+	ret = mipi_dsi_dcs_read(ctx->dsi, 0xda, &ctx->panel_build_id, 1);
+	if (ret == 1 && ctx->panel_build_id == 0x40)
+		ret = mipi_dsi_dcs_read(ctx->dsi, 0x1d, &ctx->panel_build_id, 1);
+	if (ret != 1) {
+		ctx->panel_build_id = 0;
+		dev_warn(dev, "failed to read panel build ID: %d\n", ret);
+	} else {
+		dev_info(dev, "panel build ID: %#02x\n", ctx->panel_build_id);
 	}
-
-	msleep(28); /* TODO: Is this panel-dependent? */
-
 	return 0;
+
+reset:
+	dev_err(dev, "failed to initialize panel: %d\n", ret);
+	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
+	regulator_disable(ctx->vddd);
+disable_vddio:
+	regulator_disable(ctx->vddio);
+disable_vci:
+	regulator_disable(ctx->vci);
+disable_avdd:
+	regulator_disable(ctx->avdd);
+	return ret;
+}
+
+static int m2_38_0c_0a_dsc_prepare(struct drm_panel *panel)
+{
+	return m2_38_0c_0a_dsc_prepare_mode(panel, 120);
+}
+
+static int m2_38_0c_0a_dsc_atomic_prepare(struct drm_panel *panel,
+					   struct drm_crtc *crtc,
+					   struct drm_atomic_commit *state)
+{
+	struct drm_crtc_state *crtc_state = drm_atomic_get_new_crtc_state(state, crtc);
+
+	if (!crtc_state)
+		return -EINVAL;
+
+	return m2_38_0c_0a_dsc_prepare_mode(panel, drm_mode_vrefresh(&crtc_state->mode));
 }
 
 static int m2_38_0c_0a_dsc_unprepare(struct drm_panel *panel)
 {
 	struct m2_38_0c_0a_dsc *ctx = to_m2_38_0c_0a_dsc(panel);
-	struct device *dev = &ctx->dsi->dev;
 	int ret;
 
 	ret = m2_38_0c_0a_dsc_off(ctx);
 	if (ret < 0)
-		dev_err(dev, "Failed to un-initialize panel: %d\n", ret);
+		dev_err(&ctx->dsi->dev, "failed to turn off panel: %d\n", ret);
 
 	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
-
+	regulator_disable(ctx->vddd);
+	regulator_disable(ctx->vddio);
+	regulator_disable(ctx->vci);
+	regulator_disable(ctx->avdd);
 	return 0;
 }
 
 static const struct drm_display_mode m2_38_0c_0a_dsc_mode = {
-	/* 120Hz */
-	.clock = (1440 + 32 + 16 + 32) * (3200 + 24 + 8 + 24) * 120 / 1000,
+	.clock = M2_MODE_CLOCK(120),
 	.hdisplay = 1440,
 	.hsync_start = 1440 + 32,
 	.hsync_end = 1440 + 32 + 16,
@@ -269,33 +320,189 @@ static const struct drm_display_mode m2_38_0c_0a_dsc_mode = {
 	.type = DRM_MODE_TYPE_DRIVER,
 };
 
+static const unsigned int m2_refresh_rates[] = { 120, 60, 40, 30, 24 };
+
+static enum drm_mode_status
+m2_38_0c_0a_dsc_mode_valid(struct drm_panel *panel, const struct drm_display_mode *mode)
+{
+	struct drm_display_mode supported = m2_38_0c_0a_dsc_mode;
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(m2_refresh_rates); i++) {
+		supported.clock = M2_MODE_CLOCK(m2_refresh_rates[i]);
+		if (drm_mode_equal(&supported, mode))
+			return MODE_OK;
+	}
+
+	return MODE_BAD;
+}
+
 static int m2_38_0c_0a_dsc_get_modes(struct drm_panel *panel,
 				     struct drm_connector *connector)
 {
-	return drm_connector_helper_get_modes_fixed(connector, &m2_38_0c_0a_dsc_mode);
+	struct drm_display_mode *mode;
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(m2_refresh_rates); i++) {
+		mode = drm_mode_duplicate(connector->dev, &m2_38_0c_0a_dsc_mode);
+		if (!mode)
+			return -ENOMEM;
+		mode->clock = M2_MODE_CLOCK(m2_refresh_rates[i]);
+		if (!i)
+			mode->type |= DRM_MODE_TYPE_PREFERRED;
+		drm_mode_set_name(mode);
+		drm_mode_probed_add(connector, mode);
+	}
+
+	connector->display_info.width_mm = m2_38_0c_0a_dsc_mode.width_mm;
+	connector->display_info.height_mm = m2_38_0c_0a_dsc_mode.height_mm;
+	return ARRAY_SIZE(m2_refresh_rates);
 }
 
 static const struct drm_panel_funcs m2_38_0c_0a_dsc_panel_funcs = {
 	.prepare = m2_38_0c_0a_dsc_prepare,
+	.atomic_prepare = m2_38_0c_0a_dsc_atomic_prepare,
 	.unprepare = m2_38_0c_0a_dsc_unprepare,
 	.get_modes = m2_38_0c_0a_dsc_get_modes,
+	.mode_valid = m2_38_0c_0a_dsc_mode_valid,
 };
+
+static int m2_38_0c_0a_dsc_set_pwm(struct m2_38_0c_0a_dsc *ctx, u16 brightness)
+{
+	struct mipi_dsi_device *dsi = ctx->dsi;
+	struct mipi_dsi_multi_context seq = { .dsi = dsi };
+	bool low = brightness <= 328;
+	u8 cycle = (ctx->refresh_rate == 120 ? 0x00 : 0x80) | (low ? 0x0f : 0x02);
+	const u8 gamma_auto[] = { 0x01, 0x00, 0x02, 0x00, 0x03, 0x00, 0x04,
+				  0x00, 0x05, 0x00, 0x07, 0x00, 0x0b, 0x00 };
+	const u8 gamma_low[] = { 0x10, 0x00, 0x20, 0x00, 0x30, 0x00, 0x40,
+				 0x00, 0x05, 0x00, 0x70, 0x00, 0xb0, 0x00 };
+	const u8 gamma_high[] = { 0x03, 0x00, 0x06, 0x00, 0x09, 0x00, 0x0c,
+				  0x00, 0x01, 0x00, 0x15, 0x00, 0x21, 0x00 };
+	const u8 *gamma = ctx->refresh_rate == 120 ? gamma_auto :
+			  low ? gamma_low : gamma_high;
+
+	if (!brightness || !ctx->panel_build_id || ctx->panel_build_id == 0xfb ||
+	    ctx->panel_build_id == 0x50 || ctx->panel_build_id == 0xb0 ||
+	    ctx->pwm_16pulse == low)
+		return 0;
+
+	mipi_dsi_dcs_write_seq_multi(&seq, 0xf0, 0x5a, 0x5a);
+	mipi_dsi_dcs_write_var_seq_multi(&seq, 0xbd, 0x21, cycle);
+	mipi_dsi_dcs_write_seq_multi(&seq, 0xb0, 0x00, 0x21, 0xbd);
+	if (!seq.accum_err)
+		seq.accum_err = mipi_dsi_dcs_write(dsi, 0xbd, gamma, sizeof(gamma_auto));
+	if (seq.accum_err > 0)
+		seq.accum_err = 0;
+	mipi_dsi_dcs_write_seq_multi(&seq, 0xb0, 0x00, 0x0c, 0x63);
+	mipi_dsi_dcs_write_seq_multi(&seq, 0x63, 0x20);
+	mipi_dsi_dcs_write_seq_multi(&seq, 0xb0, 0x03, 0x37, 0x65);
+	mipi_dsi_dcs_write_var_seq_multi(&seq, 0x65, low ? 0x04 : 0x01);
+	mipi_dsi_dcs_write_var_seq_multi(&seq, 0xbd, 0x21, cycle);
+	mipi_dsi_dcs_write_var_seq_multi(&seq, 0x51, brightness >> 8, brightness & 0xff);
+	mipi_dsi_dcs_write_seq_multi(&seq, 0xf7, 0x0f);
+	mipi_dsi_dcs_write_seq_multi(&seq, 0xf0, 0xa5, 0xa5);
+	mipi_dsi_msleep(&seq, ctx->refresh_rate == 120 ? 8 : 17);
+	if (!seq.accum_err && ctx->refresh_rate == 120) {
+		/* Downstream reapplies the 120 Hz auto-mode timing after a switch. */
+		dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+		mipi_dsi_dcs_write_seq_multi(&seq, 0x2a, 0x00, 0x00, 0x05, 0x9f);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0x2b, 0x00, 0x00, 0x0c, 0x7f);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xf0, 0x5a, 0x5a);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xc3, 0x0c);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xf0, 0xa5, 0xa5);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xf0, 0x5a, 0x5a);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xb9, 0x41);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xb0, 0x00, 0x06, 0xb9);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xb9, 0x0c, 0x9e, 0x0c, 0x9e, 0x00, 0x1d);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xf7, 0x0f);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xf0, 0xa5, 0xa5);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xf0, 0x5a, 0x5a);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xb0, 0x00, 0x08, 0xcb);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xcb, 0x12);
+		mipi_dsi_dcs_write_var_seq_multi(&seq, 0xbd, 0x21, cycle);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xb0, 0x00, 0x10, 0xbd);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xbd, 0x00);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xb0, 0x00, 0x21, 0xbd);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xbd, 0x01, 0x00, 0x02, 0x00,
+					     0x03, 0x00, 0x04, 0x00, 0x05, 0x00,
+					     0x07, 0x00, 0x0b, 0x00);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xb0, 0x00, 0x61, 0xbd);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xbd, 0x01, 0x00, 0x02, 0x00,
+					     0x03, 0x00, 0x04, 0x00, 0x1d);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xb0, 0x00, 0x12, 0xbd);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xbd, 0x00);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xb0, 0x00, 0x17, 0xbd);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xbd, 0x00);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xbd, 0x23);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xb0, 0x00, 0x14, 0xbd);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xbd, 0x01);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xb0, 0x00, 0x16, 0xbd);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xbd, 0x00, 0x00);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xf7, 0x0f);
+		mipi_dsi_dcs_write_seq_multi(&seq, 0xf0, 0xa5, 0xa5);
+		dsi->mode_flags |= MIPI_DSI_MODE_LPM;
+	}
+	if (seq.accum_err) {
+		ctx->pwm_16pulse = -1;
+		mipi_dsi_dcs_write(dsi, 0xf0, (u8[]){ 0xa5, 0xa5 }, 2);
+		return seq.accum_err;
+	}
+	ctx->pwm_16pulse = low;
+	return 0;
+}
 
 static int m2_38_0c_0a_dsc_bl_update_status(struct backlight_device *bl)
 {
 	struct mipi_dsi_device *dsi = bl_get_data(bl);
+	struct m2_38_0c_0a_dsc *ctx = mipi_dsi_get_drvdata(dsi);
+	struct mipi_dsi_multi_context dsi_ctx = { .dsi = dsi };
 	u16 brightness = backlight_get_brightness(bl);
+	bool hbm = brightness > 2047;
 	int ret;
+
+	if (hbm) {
+		ret = m2_38_0c_0a_dsc_set_pwm(ctx, brightness);
+		if (ret < 0)
+			return ret;
+	}
+
+	/* The panel uses separate normal and HBM ranges, joined at 0x07ff. */
+	if (hbm != ctx->hbm_enabled) {
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x00, 0x0c, 0x63);
+		mipi_dsi_dcs_write_var_seq_multi(&dsi_ctx, 0x63, hbm ? 0x30 : 0x20);
+		mipi_dsi_dcs_write_var_seq_multi(&dsi_ctx, 0x53, hbm ? 0x28 : 0x20);
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x51, 0x07, 0xff);
+		mipi_dsi_msleep(&dsi_ctx, hbm ? 17 : 5);
+		if (!hbm)
+			mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x00, 0x01, 0x49);
+		mipi_dsi_dcs_write_var_seq_multi(&dsi_ctx, 0x49, hbm ? 0x00 : 0x01);
+		if (!hbm)
+			mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x51, 0x07, 0xff);
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
+		if (dsi_ctx.accum_err) {
+			/* A partial sequence leaves the panel's HBM state unknown. */
+			ctx->hbm_enabled = -1;
+			mipi_dsi_dcs_write(dsi, 0xf0, (u8[]){ 0xa5, 0xa5 }, 2);
+			return dsi_ctx.accum_err;
+		}
+		ctx->hbm_enabled = hbm;
+	}
+
+	if (!hbm) {
+		ret = m2_38_0c_0a_dsc_set_pwm(ctx, brightness);
+		if (ret < 0)
+			return ret;
+	}
 
 	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
 
 	ret = mipi_dsi_dcs_set_display_brightness_large(dsi, brightness);
-	if (ret < 0)
-		return ret;
-
 	dsi->mode_flags |= MIPI_DSI_MODE_LPM;
 
-	return 0;
+	return ret < 0 ? ret : 0;
 }
 
 // TODO: Check if /sys/class/backlight/.../actual_brightness actually returns
@@ -309,12 +516,9 @@ static int m2_38_0c_0a_dsc_bl_get_brightness(struct backlight_device *bl)
 	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
 
 	ret = mipi_dsi_dcs_get_display_brightness_large(dsi, &brightness);
-	if (ret < 0)
-		return ret;
-
 	dsi->mode_flags |= MIPI_DSI_MODE_LPM;
 
-	return brightness;
+	return ret < 0 ? ret : brightness;
 }
 
 static const struct backlight_ops m2_38_0c_0a_dsc_bl_ops = {
@@ -387,8 +591,6 @@ static int m2_38_0c_0a_dsc_probe(struct mipi_dsi_device *dsi)
 		       DRM_MODE_CONNECTOR_DSI);
 	ctx->panel.prepare_prev_first = true;
 
-	ctx->panel.prepare_prev_first = true;
-
 	ctx->panel.backlight = m2_38_0c_0a_dsc_create_backlight(dsi);
 	if (IS_ERR(ctx->panel.backlight))
 		return dev_err_probe(dev, PTR_ERR(ctx->panel.backlight),
@@ -402,7 +604,10 @@ static int m2_38_0c_0a_dsc_probe(struct mipi_dsi_device *dsi)
 	ctx->dsc.dsc_version_major = 1;
 	ctx->dsc.dsc_version_minor = 2;
 
-	/* TODO: Pass slice_per_pkt = 2 */
+	/* Keep the working 120 Hz transfer clock for the slower panel modes. */
+	dsi->cmd_mode_min_pclk = M2_MODE_CLOCK(120);
+	dsi->dsc_slice_per_pkt = 2;
+
 	ctx->dsc.slice_height = 25;
 	ctx->dsc.slice_width = 720;
 	/*

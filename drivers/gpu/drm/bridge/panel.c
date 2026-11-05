@@ -126,7 +126,7 @@ static void panel_bridge_atomic_pre_enable(struct drm_bridge *bridge,
 	if (old_crtc_state && old_crtc_state->self_refresh_active)
 		return;
 
-	drm_panel_prepare(panel_bridge->panel);
+	drm_panel_atomic_prepare(panel_bridge->panel, crtc, atomic_state);
 }
 
 static void panel_bridge_atomic_enable(struct drm_bridge *bridge,
@@ -186,6 +186,20 @@ static void panel_bridge_atomic_post_disable(struct drm_bridge *bridge,
 	drm_panel_unprepare(panel_bridge->panel);
 }
 
+static enum drm_mode_status
+panel_bridge_mode_valid(struct drm_bridge *bridge,
+			const struct drm_display_info *info,
+			const struct drm_display_mode *mode)
+{
+	struct panel_bridge *panel_bridge = drm_bridge_to_panel_bridge(bridge);
+	struct drm_panel *panel = panel_bridge->panel;
+
+	if (panel->funcs && panel->funcs->mode_valid)
+		return panel->funcs->mode_valid(panel, mode);
+
+	return MODE_OK;
+}
+
 static int panel_bridge_get_modes(struct drm_bridge *bridge,
 				  struct drm_connector *connector)
 {
@@ -213,6 +227,7 @@ static const struct drm_bridge_funcs panel_bridge_bridge_funcs = {
 	.atomic_disable = panel_bridge_atomic_disable,
 	.atomic_post_disable = panel_bridge_atomic_post_disable,
 	.get_modes = panel_bridge_get_modes,
+	.mode_valid = panel_bridge_mode_valid,
 	.atomic_create_state = drm_atomic_helper_bridge_create_state,
 	.atomic_duplicate_state = drm_atomic_helper_bridge_duplicate_state,
 	.atomic_destroy_state = drm_atomic_helper_bridge_destroy_state,

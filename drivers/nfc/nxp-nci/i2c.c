@@ -18,6 +18,7 @@
 #include <linux/interrupt.h>
 #include <linux/irq.h>
 #include <linux/module.h>
+#include <linux/regulator/consumer.h>
 #include <linux/nfc.h>
 #include <linux/gpio/consumer.h>
 #include <linux/unaligned.h>
@@ -288,6 +289,10 @@ static int nxp_nci_i2c_probe(struct i2c_client *client)
 			   GFP_KERNEL);
 	if (!phy)
 		return -ENOMEM;
+
+	r = devm_regulator_get_enable_optional(dev, "vdd");
+	if (r && r != -ENODEV)
+		return dev_err_probe(dev, r, "failed to enable vdd supply\n");
 
 	phy->i2c_dev = client;
 	i2c_set_clientdata(client, phy);
