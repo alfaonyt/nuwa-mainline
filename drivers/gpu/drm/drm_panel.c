@@ -101,17 +101,8 @@ void drm_panel_remove(struct drm_panel *panel)
 }
 EXPORT_SYMBOL(drm_panel_remove);
 
-/**
- * drm_panel_prepare - power on a panel
- * @panel: DRM panel
- *
- * Calling this function will enable power and deassert any reset signals to
- * the panel. After this has completed it is possible to communicate with any
- * integrated circuitry via a command bus. This function cannot fail (as it is
- * called from the pre_enable call chain). There will always be a call to
- * drm_panel_disable() afterwards.
- */
-void drm_panel_prepare(struct drm_panel *panel)
+static void __drm_panel_prepare(struct drm_panel *panel, struct drm_crtc *crtc,
+				struct drm_atomic_state *state)
 {
 	struct drm_panel_follower *follower;
 	int ret;
@@ -126,11 +117,14 @@ void drm_panel_prepare(struct drm_panel *panel)
 
 	mutex_lock(&panel->follower_lock);
 
-	if (panel->funcs && panel->funcs->prepare) {
+	if (panel->funcs && state && panel->funcs->atomic_prepare)
+		ret = panel->funcs->atomic_prepare(panel, crtc, state);
+	else if (panel->funcs && panel->funcs->prepare)
 		ret = panel->funcs->prepare(panel);
-		if (ret < 0)
-			goto exit;
-	}
+	else
+		ret = 0;
+	if (ret < 0)
+		goto exit;
 	panel->prepared = true;
 
 	list_for_each_entry(follower, &panel->followers, list) {
@@ -146,7 +140,38 @@ void drm_panel_prepare(struct drm_panel *panel)
 exit:
 	mutex_unlock(&panel->follower_lock);
 }
+/**
+ * drm_panel_prepare - power on a panel
+ * @panel: DRM panel
+ *
+ * Calling this function will enable power and deassert any reset signals to
+ * the panel. After this has completed it is possible to communicate with any
+ * integrated circuitry via a command bus. This function cannot fail (as it is
+ * called from the pre_enable call chain). There will always be a call to
+ * drm_panel_disable() afterwards.
+ */
+void drm_panel_prepare(struct drm_panel *panel)
+{
+	__drm_panel_prepare(panel, NULL, NULL);
+}
 EXPORT_SYMBOL(drm_panel_prepare);
+
+/**
+ * drm_panel_atomic_prepare - prepare a panel with the new atomic state
+ * @panel: DRM panel
+ * @crtc: CRTC driving the panel
+ * @state: atomic state containing the new CRTC state
+ *
+ * This is equivalent to drm_panel_prepare(), but allows a panel's
+ * atomic_prepare callback to use the selected mode. Falls back to prepare
+ * when no atomic callback is provided.
+ */
+void drm_panel_atomic_prepare(struct drm_panel *panel, struct drm_crtc *crtc,
+			      struct drm_atomic_state *state)
+{
+	__drm_panel_prepare(panel, crtc, state);
+}
+EXPORT_SYMBOL(drm_panel_atomic_prepare);
 
 /**
  * drm_panel_unprepare - power off a panel

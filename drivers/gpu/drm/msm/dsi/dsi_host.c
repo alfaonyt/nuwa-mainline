@@ -167,6 +167,7 @@ struct msm_dsi_host {
 	struct drm_display_mode *mode;
 	struct drm_dsc_config *dsc;
 	unsigned int dsc_slice_per_pkt;
+	u32 cmd_mode_min_pclk;
 
 	/* connected device info */
 	unsigned int channel;
@@ -635,13 +636,26 @@ static unsigned long dsi_get_pclk_rate(const struct drm_display_mode *mode,
 	return pclk_rate;
 }
 
+static unsigned long dsi_host_pclk_rate(struct msm_dsi_host *msm_host,
+					const struct drm_display_mode *mode,
+					bool is_bonded_dsi)
+{
+	struct drm_display_mode transfer_mode = *mode;
+
+	/* Command mode can transmit a frame faster than the panel refreshes. */
+	if (!(msm_host->mode_flags & MIPI_DSI_MODE_VIDEO))
+		transfer_mode.clock = max_t(u32, mode->clock, msm_host->cmd_mode_min_pclk);
+
+	return dsi_get_pclk_rate(&transfer_mode, msm_host->dsc, is_bonded_dsi);
+}
+
 unsigned long dsi_byte_clk_get_rate(struct mipi_dsi_host *host, bool is_bonded_dsi,
 				    const struct drm_display_mode *mode)
 {
 	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
 	u8 lanes = msm_host->lanes;
 	u32 bpp = mipi_dsi_pixel_format_to_bpp(msm_host->format);
-	unsigned long pclk_rate = dsi_get_pclk_rate(mode, msm_host->dsc, is_bonded_dsi);
+	unsigned long pclk_rate = dsi_host_pclk_rate(msm_host, mode, is_bonded_dsi);
 	unsigned long pclk_bpp;
 
 	if (lanes == 0) {
@@ -660,7 +674,7 @@ unsigned long dsi_byte_clk_get_rate(struct mipi_dsi_host *host, bool is_bonded_d
 
 static void dsi_calc_pclk(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
 {
-	msm_host->pixel_clk_rate = dsi_get_pclk_rate(msm_host->mode, msm_host->dsc, is_bonded_dsi);
+	msm_host->pixel_clk_rate = dsi_host_pclk_rate(msm_host, msm_host->mode, is_bonded_dsi);
 	msm_host->byte_clk_rate = dsi_byte_clk_get_rate(&msm_host->base, is_bonded_dsi,
 							msm_host->mode);
 
@@ -1694,6 +1708,7 @@ static int dsi_host_attach(struct mipi_dsi_host *host,
 	msm_host->lanes = dsi->lanes;
 	msm_host->format = dsi->format;
 	msm_host->mode_flags = dsi->mode_flags;
+	msm_host->cmd_mode_min_pclk = dsi->cmd_mode_min_pclk;
 	if (dsi->dsc) {
 		msm_host->dsc = dsi->dsc;
 		msm_host->dsc_slice_per_pkt = dsi->dsc_slice_per_pkt;
