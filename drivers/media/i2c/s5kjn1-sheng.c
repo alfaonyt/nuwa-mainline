@@ -1855,14 +1855,14 @@ static int s5kjn1_power_on(struct device *dev)
 				    s5kjn1->supplies);
 	if (ret < 0) {
 		dev_err(dev, "failed to enable regulators\n");
-		goto disable_clk;
+		return ret;
 	}
 	usleep_range(1000, 2000);
 
 	ret = clk_prepare_enable(s5kjn1->mclk);
 	if (ret < 0) {
 		dev_err(dev, "failed to enable mclk\n");
-		return ret;
+		goto disable_regulator;
 	}
 	usleep_range(1000, 2000);
 
@@ -1871,15 +1871,16 @@ static int s5kjn1_power_on(struct device *dev)
 
 	ret = s5kjn1_check_sensor_id(s5kjn1);
 	if (ret)
-		goto disable_regulator;
+		goto disable_clk;
 
 	return 0;
 
+disable_clk:
+	gpiod_set_value_cansleep(s5kjn1->reset_gpio, 1);
+	clk_disable_unprepare(s5kjn1->mclk);
 disable_regulator:
 	regulator_bulk_disable(ARRAY_SIZE(s5kjn1_supply_names),
 			       s5kjn1->supplies);
-disable_clk:
-	clk_disable_unprepare(s5kjn1->mclk);
 
 	return ret;
 }
