@@ -1317,6 +1317,8 @@
 };
 
 &pm8550b_haptics {
+	qcom,lra-period-us = <7692>;
+	qcom,vmax-mv = <1650>;
 	status = "okay";
 };
 
