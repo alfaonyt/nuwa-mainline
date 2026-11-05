@@ -26,6 +26,9 @@ properties:
   firmware-gpios:
     description: Output GPIO pin used to enter firmware download mode
 
+  vdd-supply:
+    description: Controller I/O power supply
+
   interrupts:
     maxItems: 1
 

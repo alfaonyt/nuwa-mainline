@@ -1119,6 +1119,23 @@
 	};
 };
 
+&i2c0 {
+	clock-frequency = <1000000>;
+	status = "okay";
+
+	nfc@28 {
+		compatible = "nxp,nxp-nci-i2c";
+		reg = <0x28>;
+		interrupt-parent = <&tlmm>;
+		interrupts = <55 IRQ_TYPE_LEVEL_HIGH>;
+		enable-gpios = <&tlmm 30 GPIO_ACTIVE_HIGH>;
+		firmware-gpios = <&tlmm 12 GPIO_ACTIVE_HIGH>;
+		vdd-supply = <&vreg_l15b_1p8>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&nfc_int_default>, <&nfc_ctrl_default>;
+	};
+};
+
 &i2c8 {
 	status = "okay";
 	clock-frequency = <1000000>;
@@ -1419,6 +1436,20 @@
 
 &tlmm {
 	gpio-reserved-ranges = <32 8>;
+
+	nfc_int_default: nfc-int-default-state {
+		pins = "gpio55";
+		function = "gpio";
+		bias-pull-down;
+		drive-strength = <2>;
+	};
+
+	nfc_ctrl_default: nfc-ctrl-default-state {
+		pins = "gpio12", "gpio30", "gpio31";
+		function = "gpio";
+		bias-disable;
+		drive-strength = <2>;
+	};
 
 	hall_sensor_default: hall-sensor-default-state {
 		pins = "gpio171";
