@@ -26,6 +26,7 @@ struct m2_38_0c_0a_dsc {
 	struct mipi_dsi_device *dsi;
 	struct drm_dsc_config dsc;
 	struct gpio_desc *reset_gpio;
+	int hbm_enabled;
 
 	struct regulator *avdd;
 	struct regulator *vci;
@@ -229,6 +230,7 @@ static int m2_38_0c_0a_dsc_prepare_mode(struct drm_panel *panel, unsigned int ra
 	ret = m2_38_0c_0a_dsc_on(ctx, refresh);
 	if (ret < 0)
 		goto reset;
+	ctx->hbm_enabled = false;
 
 	drm_dsc_pps_payload_pack(&pps, &ctx->dsc);
 	ret = mipi_dsi_picture_parameter_set(ctx->dsi, &pps);
@@ -353,8 +355,35 @@ static const struct drm_panel_funcs m2_38_0c_0a_dsc_panel_funcs = {
 static int m2_38_0c_0a_dsc_bl_update_status(struct backlight_device *bl)
 {
 	struct mipi_dsi_device *dsi = bl_get_data(bl);
+	struct m2_38_0c_0a_dsc *ctx = mipi_dsi_get_drvdata(dsi);
+	struct mipi_dsi_multi_context dsi_ctx = { .dsi = dsi };
 	u16 brightness = backlight_get_brightness(bl);
+	bool hbm = brightness > 2047;
 	int ret;
+
+	/* The panel uses separate normal and HBM ranges, joined at 0x07ff. */
+	if (hbm != ctx->hbm_enabled) {
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x00, 0x0c, 0x63);
+		mipi_dsi_dcs_write_var_seq_multi(&dsi_ctx, 0x63, hbm ? 0x30 : 0x20);
+		mipi_dsi_dcs_write_var_seq_multi(&dsi_ctx, 0x53, hbm ? 0x28 : 0x20);
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x51, 0x07, 0xff);
+		mipi_dsi_msleep(&dsi_ctx, hbm ? 17 : 5);
+		if (!hbm)
+			mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x00, 0x01, 0x49);
+		mipi_dsi_dcs_write_var_seq_multi(&dsi_ctx, 0x49, hbm ? 0x00 : 0x01);
+		if (!hbm)
+			mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x51, 0x07, 0xff);
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
+		if (dsi_ctx.accum_err) {
+			/* A partial sequence leaves the panel's HBM state unknown. */
+			ctx->hbm_enabled = -1;
+			mipi_dsi_dcs_write(dsi, 0xf0, (u8[]){ 0xa5, 0xa5 }, 2);
+			return dsi_ctx.accum_err;
+		}
+		ctx->hbm_enabled = hbm;
+	}
 
 	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
 
