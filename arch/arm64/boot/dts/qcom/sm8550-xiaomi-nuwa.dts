@@ -1008,7 +1008,7 @@
 
 		port {
 			s5kjn1_uw_ep: endpoint {
-				data-lanes = <0 1 2 3>;
+				data-lanes = <1 2 3 4>;
 				link-frequencies = /bits/ 64 <857600000>;
 				remote-endpoint = <&csiphy5_ep>;
 			};
@@ -1050,7 +1050,7 @@
 
 		port {
 			s5kjn1_tele_ep: endpoint {
-				data-lanes = <0 1 2 3>;
+				data-lanes = <1 2 3 4>;
 				link-frequencies = /bits/ 64 <857600000>;
 				remote-endpoint = <&csiphy3_ep>;
 			};

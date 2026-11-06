@@ -1136,6 +1136,7 @@ properties:
               - qcom,sm8550-qrd
               - samsung,q5q
               - sony,pdx234
+              - xiaomi,nuwa
           - const: qcom,sm8550
 
       - items:
