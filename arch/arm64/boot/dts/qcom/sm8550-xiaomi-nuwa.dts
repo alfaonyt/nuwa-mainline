@@ -44,7 +44,7 @@
 		ebuff {
 		};
 	};
-	
+
 	aliases {
 		serial0 = &uart7;
 		serial1 = &uart14;
@@ -90,11 +90,11 @@
 						remote-endpoint = <&fsa4480_sbu_mux>;
 					};
 				};
-				
+
 			};
 		};
 	};
-	
+
 	display_avdd: gpio-regulator {
 		compatible = "regulator-fixed";
 		regulator-name = "display_avdd";
@@ -108,7 +108,7 @@
 		regulator-boot-on;
 		regulator-always-on;
 	};
-	
+
 	display_vci: gpio-regulator {
 		compatible = "regulator-fixed";
 		regulator-name = "display_vci";
@@ -121,7 +121,7 @@
 		regulator-boot-on;
 		regulator-always-on;
 	};
-	
+
 	display_vddio: gpio-regulator {
 		compatible = "regulator-fixed";
 		regulator-name = "display_vddio";
@@ -134,7 +134,7 @@
 		regulator-boot-on;
 		regulator-always-on;
 	};
-	
+
 	display_vddd: gpio-regulator {
 		compatible = "regulator-fixed";
 		regulator-name = "display_vddd";
@@ -217,7 +217,7 @@
 		bt-enable-gpios = <&tlmm 81 GPIO_ACTIVE_HIGH>;
 
 		vdd-supply = <&vreg_s5g_0p8>;
-		vddio-supply = <&vreg_l15b_1p8>; 
+		vddio-supply = <&vreg_l15b_1p8>;
 		vddaon-supply = <&vreg_s2g_0p8>;
 		vdddig-supply = <&vreg_s4e_0p9>;
 		vddrfa1p2-supply = <&vreg_s4g_1p3>;
@@ -281,12 +281,12 @@
 			wakeup-source;
 		};
 	};
-	
+
 	reserved_memory: reserved-memory {
 		#address-cells = <2>;
 		#size-cells = <2>;
 		ranges;
-		
+
 		hyp_mem: hyp-region@80000000 {
 			no-map;
 			reg = <0x00 0x80000000 0x00 0xa00000>;
@@ -327,12 +327,12 @@
 			no-map;
 			reg = <0x00 0x81f00000 0x00 0x20000>;
 		};
-		
+
 		tz_stat_region: tz-stat-region@82700000 {
 			no-map;
 			reg = <0x00 0x82700000 0x00 0x100000>;
 		};
-		
+
 		mpss_mem: mpss-region@8a800000 {
 			no-map;
 			reg = <0x00 0x8a800000 0x00 0x10800000>;
@@ -357,7 +357,7 @@
 			no-map;
 			reg = <0x00 0x9b09a000 0x00 0x2000>;
 		};
-		
+
 		video_mem: video-region@9bb00000 {
 			no-map;
 			reg = <0x00 0x9bb00000 0x00 0x700000>;
@@ -553,7 +553,7 @@
 			regulator-max-microvolt = <3960000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 		};
-		
+
 		/* Xiaomi change for Camera Modules */
 		vreg_bob2: bob2 {
 			regulator-name = "vreg_bob2";
@@ -1061,8 +1061,15 @@
 &ipa {
 	qcom,gsi-loader = "self";
 	memory-region = <&ipa_fw_mem>;
+	sram = <&nuwa_ipa_modem_tables>;
 	firmware-name = "qcom/sm8550/nuwa/ipa_fws.mbn";
 	status = "okay";
+};
+
+&imem {
+	nuwa_ipa_modem_tables: modem-tables@28000 {
+		reg = <0x28000 0x2000>;
+	};
 };
 
 &qupv3_id_0 {
@@ -1223,9 +1230,9 @@
                 pinctrl-names = "default";
                 pinctrl-0 = <&spi4_pins>;
 
-                gpio-sck = <&tlmm 46 GPIO_ACTIVE_HIGH>;
-                gpio-mosi = <&tlmm 45 GPIO_ACTIVE_HIGH>;
-                gpio-miso = <&tlmm 44 GPIO_ACTIVE_HIGH>;
+                sck-gpios = <&tlmm 46 GPIO_ACTIVE_HIGH>;
+                mosi-gpios = <&tlmm 45 GPIO_ACTIVE_HIGH>;
+                miso-gpios = <&tlmm 44 GPIO_ACTIVE_HIGH>;
                 cs-gpios = <&tlmm 47 GPIO_ACTIVE_LOW>;
                 num-chipselects = <1>;
                 status = "okay";
@@ -1243,11 +1250,8 @@
 			vdd-supply = <&vreg_l12b_1p8>;
 			fts,pwr-reg-name = "avdd";
 			fts,bus-reg-name = "vdd";
-			fts,irq-gpio = <&tlmm 25 0x2008>;
-			fts,irq-gpio-name = "fts_irq";
-			fts,reset-gpio-enable;
-			fts,reset-gpio = <&tlmm 24 0x00>;
-			fts,reset-gpio-name = "fts_rst";
+			fts,irq-gpios = <&tlmm 25 0x2008>;
+			fts,reset-gpios = <&tlmm 24 0x00>;
 			fts,irq-flags = <0x2008>;
 
 			fts,x-max = <14400>;
@@ -1268,7 +1272,7 @@
 							2 1 0 0 0 0 0 0
 							2 2 0 0 0 3199 0 0
 							2 3 1439 0 1439 3199 0 0>;
-	
+
 			fts,touch-deadzone-filter-hor = <2 0 0 0 1439 7 0 0
 							2 1 0 3192 1439 3199 0 0
 							2 2 0 0 0 3199 0 0
@@ -1277,7 +1281,7 @@
 						1 1 0 0 0 0 0 0
 						1 2 0 0 60 3199 0 0
 						1 3 1379 0 1439 3199 0 0>;
-	
+
 			fts,touch-edgezone-filter-hor = <1 0 0 0 1439 70 0 0
 							1 1 0 3129 1439 3199 0 0
 							1 2 0 0 60 3199 0 0
@@ -1335,7 +1339,7 @@
 	status = "okay";
 };
 
-&pcieport0 {
+&pcie0_port0 {
 	status = "okay";
 
 	wifi@0 {
@@ -1476,7 +1480,7 @@
 		drive-strength = <2>;
 		bias-pull-down;
 	};
-	
+
 	sde_te_active: sde-te-active-state {
 		pins = "gpio86";
 		function = "mdp_vsync";
@@ -1569,21 +1573,21 @@
 			output-high;
 		};
 	};
-	
+
 	display_vci_default: display-vci-default-state {
 		pins = "gpio127";
 		function = "gpio";
 		bias-disable;
 		drive-strength = <2>;
 	};
-	
+
 	display_vddio_default: display-vddio-default-state {
 		pins = "gpio126";
 		function = "gpio";
 		bias-disable;
 		drive-strength = <2>;
 	};
-	
+
 	display_vddd_default: display-vddd-default-state {
 		pins = "gpio42";
 		function = "gpio";

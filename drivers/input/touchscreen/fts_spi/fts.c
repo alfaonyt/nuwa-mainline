@@ -50,7 +50,6 @@
 #endif
 
 #include <linux/gpio.h>
-#include <linux/of_gpio.h>
 #include <linux/regulator/consumer.h>
 #include <linux/pinctrl/consumer.h>
 
@@ -5007,8 +5006,8 @@ int fts_chip_powercycle(struct fts_ts_info *info)
 		}
 	}
 
-	if (info->board->avdd_gpio) {
-		gpio_direction_output(info->board->avdd_gpio, 0);
+	if (info->avdd_gpio) {
+		gpiod_set_value_cansleep(info->avdd_gpio, 0);
 	}
 
 	if (info->avddold_reg) {
@@ -5021,8 +5020,8 @@ int fts_chip_powercycle(struct fts_ts_info *info)
 		}
 	}
 
-	if (info->board->reset_gpio != GPIO_NOT_DEFINED)
-		gpio_set_value(info->board->reset_gpio, 0);
+	if (info->reset_gpio)
+		gpiod_set_value_cansleep(info->reset_gpio, 0);
 	else
 		mdelay(300);
 
@@ -5044,8 +5043,8 @@ int fts_chip_powercycle(struct fts_ts_info *info)
 		}
 	}
 
-	if (info->board->avdd_gpio) {
-		gpio_direction_output(info->board->avdd_gpio, 1);
+	if (info->avdd_gpio) {
+		gpiod_set_value_cansleep(info->avdd_gpio, 1);
 	}
 
 	mdelay(1);
@@ -5062,9 +5061,9 @@ int fts_chip_powercycle(struct fts_ts_info *info)
 
 	mdelay(5);
 
-	if (info->board->reset_gpio != GPIO_NOT_DEFINED) {
+	if (info->reset_gpio) {
 		mdelay(10);
-		gpio_set_value(info->board->reset_gpio, 1);
+		gpiod_set_value_cansleep(info->reset_gpio, 1);
 	}
 
 	release_all_touches(info);
@@ -5803,8 +5802,8 @@ static int fts_enable_reg(struct fts_ts_info *info, bool enable)
 		*/
 	}
 
-	if (info->board->avdd_gpio) {
-		gpio_direction_output(info->board->avdd_gpio, 1);
+	if (info->avdd_gpio) {
+		gpiod_set_value_cansleep(info->avdd_gpio, 1);
 	}
 
 	return OK;
@@ -5812,8 +5811,8 @@ static int fts_enable_reg(struct fts_ts_info *info, bool enable)
 disable_pwr_reg:
 	if (info->avdd_reg)
 		regulator_disable(info->avdd_reg);
-	if (info->board->avdd_gpio)
-		gpio_direction_output(info->board->avdd_gpio, 0);
+	if (info->avdd_gpio)
+		gpiod_set_value_cansleep(info->avdd_gpio, 0);
 
 disable_bus_reg:
 	if (info->vdd_reg)
@@ -5841,6 +5840,10 @@ static int fts_gpio_setup(struct fts_ts_info *info)
 
 	info->reset_gpio = devm_gpiod_get(dev, "fts,reset", GPIOD_OUT_LOW);
 	if(IS_ERR(info->reset_gpio)) return PTR_ERR(info->reset_gpio);
+
+	info->avdd_gpio = devm_gpiod_get_optional(dev, "fts,avdd", GPIOD_OUT_LOW);
+	if (IS_ERR(info->avdd_gpio))
+		return PTR_ERR(info->avdd_gpio);
 
 	info->gpio_has_request = true;
 	return retval;
@@ -5932,14 +5935,6 @@ static int parse_dt(struct device *dev, struct fts_hw_platform_data *bdata)
 		logError(0, "%s bus_reg_name = %s\n", tag, name);
 	}
 
-	retval = of_get_named_gpio(np, "fts,avdd-gpio", 0);
-	if (retval < 0) {
-		logError(0,"%s can't find avdd-gpio[%d]\n", tag, retval);
-		bdata->avdd_gpio = 0;
-	} else {
-		logError(0,"%s get avdd-gpio[%d] from dt\n", tag, retval);
-		bdata->avdd_gpio = retval;
-	}
 
 	retval = of_property_read_u32(np, "fts,irq-flags", &temp_val);
 	if (retval < 0)

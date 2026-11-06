@@ -28,7 +28,6 @@
 #include <linux/stdarg.h>
 #include <linux/delay.h>
 #include <linux/ctype.h>
-#include <linux/of_gpio.h>
 
 #include <linux/spi/spidev.h>
 

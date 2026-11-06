@@ -546,22 +546,16 @@ static int m2_38_0c_0a_dsc_probe(struct mipi_dsi_device *dsi)
 	struct m2_38_0c_0a_dsc *ctx;
 	int ret;
 
-	/*
 	ctx = devm_drm_panel_alloc(dev, struct m2_38_0c_0a_dsc, panel,
 				   &m2_38_0c_0a_dsc_panel_funcs,
 				   DRM_MODE_CONNECTOR_DSI);
 	if (IS_ERR(ctx))
 		return PTR_ERR(ctx);
-	*/
-
-	ctx = devm_kzalloc(dev, sizeof(*ctx), GFP_KERNEL);
-	if (!ctx)
-		return -ENOMEM;
 
 	ctx->avdd = devm_regulator_get(dev, "avdd");
 	if (IS_ERR(ctx->avdd))
 		return dev_err_probe(dev, PTR_ERR(ctx->avdd), "failed to get avdd regulator\n");
-	
+
 	ctx->vci = devm_regulator_get(dev, "vci");
 	if (IS_ERR(ctx->vci))
 		return dev_err_probe(dev, PTR_ERR(ctx->vci), "failed to get vci regulator\n");
@@ -569,7 +563,7 @@ static int m2_38_0c_0a_dsc_probe(struct mipi_dsi_device *dsi)
 	ctx->vddio = devm_regulator_get(dev, "vddio");
 	if (IS_ERR(ctx->vddio))
 		return dev_err_probe(dev, PTR_ERR(ctx->vddio), "failed to get vddio regulator\n");
-	
+
 	ctx->vddd = devm_regulator_get(dev, "vddd");
 	if (IS_ERR(ctx->vddd))
 		return dev_err_probe(dev, PTR_ERR(ctx->vddd), "failed to get vddd regulator\n");
@@ -585,10 +579,9 @@ static int m2_38_0c_0a_dsc_probe(struct mipi_dsi_device *dsi)
 	dsi->lanes = 4;
 	dsi->format = MIPI_DSI_FMT_RGB101010;
 	dsi->mode_flags = MIPI_DSI_MODE_VIDEO_BURST |
-			  MIPI_DSI_CLOCK_NON_CONTINUOUS | MIPI_DSI_MODE_LPM;
+			  MIPI_DSI_CLOCK_NON_CONTINUOUS | MIPI_DSI_MODE_LPM |
+			  MIPI_DSI_MODE_DSC_ALL_SLICES_IN_PKT;
 
-	drm_panel_init(&ctx->panel, dev, &m2_38_0c_0a_dsc_panel_funcs,
-		       DRM_MODE_CONNECTOR_DSI);
 	ctx->panel.prepare_prev_first = true;
 
 	ctx->panel.backlight = m2_38_0c_0a_dsc_create_backlight(dsi);
@@ -606,7 +599,6 @@ static int m2_38_0c_0a_dsc_probe(struct mipi_dsi_device *dsi)
 
 	/* Keep the working 120 Hz transfer clock for the slower panel modes. */
 	dsi->cmd_mode_min_pclk = M2_MODE_CLOCK(120);
-	dsi->dsc_slice_per_pkt = 2;
 
 	ctx->dsc.slice_height = 25;
 	ctx->dsc.slice_width = 720;

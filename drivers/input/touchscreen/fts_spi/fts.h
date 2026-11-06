@@ -352,6 +352,7 @@ struct fts_ts_info {
 
 	struct gpio_desc *irq_gpio;
 	struct gpio_desc *reset_gpio;
+	struct gpio_desc *avdd_gpio;
 
 	int resume_bit;
 	int fwupdate_stat;

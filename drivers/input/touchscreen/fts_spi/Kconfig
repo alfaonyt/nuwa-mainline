@@ -6,4 +6,3 @@ config TOUCHSCREEN_ST_FTS_V521_SPI
 	  Say Y here if you have ST FTS series I2C touchscreen.
 	  If unsure, say N.
 	  To compile this driver as a module, choose M here
-
